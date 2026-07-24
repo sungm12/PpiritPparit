@@ -696,7 +696,7 @@
             if (isFirebaseLoading && isLocalMode === false) {
                 return (
                     <div className="flex flex-col items-center justify-center min-h-screen bg-slate-50">
-                        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-blue-600 mb-4"></div>
+                        <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-emerald-600 mb-4"></div>
                         <p className="text-slate-600 font-medium">도계 아카이브 보안 통신 채널 연결 중...</p>
                     </div>
                 );
@@ -707,35 +707,35 @@
                     <div className="flex items-center justify-center min-h-screen bg-slate-100 px-4">
                         <div className="bg-white p-8 rounded-2xl shadow-xl max-w-md w-full border border-slate-200">
                             <div className="text-center mb-8">
-                                <div className="bg-blue-600 text-white p-3.5 rounded-full inline-block mb-3 shadow-md">
+                                <div className="bg-emerald-600 text-white p-3.5 rounded-full inline-block mb-3 shadow-md">
                                     <i className="fa-solid fa-graduation-cap text-3xl"></i>
                                 </div>
                                 <h1 className="text-3xl font-extrabold text-slate-800 tracking-tight">Dogye Archive</h1>
-                                <p className="text-slate-500 text-sm mt-1 font-semibold text-blue-600">v 3.2 클라우드 엔진</p>
+                                <p className="text-emerald-700 text-sm mt-1 font-semibold">도계고등학교 상징 테마</p>
                             </div>
 
                             <div className="flex bg-slate-100 p-1 rounded-xl mb-6">
-                                <button onClick={() => setIsLoginView(true)} className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${isLoginView ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>인증 로그인</button>
-                                <button onClick={() => setIsLoginView(false)} className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${!isLoginView ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500'}`}>신규 학생 등록</button>
+                                <button onClick={() => setIsLoginView(true)} className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${isLoginView ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500'}`}>인증 로그인</button>
+                                <button onClick={() => setIsLoginView(false)} className={`flex-1 py-2 text-sm font-semibold rounded-lg transition-all ${!isLoginView ? 'bg-white text-emerald-700 shadow-sm' : 'text-slate-500'}`}>신규 학생 등록</button>
                             </div>
 
                             {isLoginView ? (
                                 <form onSubmit={handleLogin} className="space-y-4">
-                                    <div><input type="email" placeholder="도계고 이메일 (@dogye.hs.kr)" value={loginEmail} onChange={(e) => setLoginEmail(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm" /></div>
-                                    <div><input type="password" placeholder="비밀번호" value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm" /></div>
-                                    <button type="submit" className="w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3.5 rounded-xl transition-all shadow-md mt-2">아카이브 출입</button>
+                                    <div><input type="email" placeholder="도계고 이메일 (@dogye.hs.kr)" value={loginEmail} onChange={(e) => setLoginEmail(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none text-sm" /></div>
+                                    <div><input type="password" placeholder="비밀번호" value={loginPassword} onChange={(e) => setLoginPassword(e.target.value)} className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none text-sm" /></div>
+                                    <button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3.5 rounded-xl transition-all shadow-md mt-2">아카이브 출입</button>
                                 </form>
                             ) : (
                                 <form onSubmit={handleSignUp} className="space-y-4">
-                                    <div><input type="text" placeholder="이름 (실명)" value={signUpName} onChange={(e) => setSignUpName(e.target.value)} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm" /></div>
+                                    <div><input type="text" placeholder="이름 (실명)" value={signUpName} onChange={(e) => setSignUpName(e.target.value)} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none text-sm" /></div>
                                     <div>
                                         <select value={signUpGrade} onChange={(e) => setSignUpGrade(e.target.value)} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:outline-none text-sm">
                                             <option value="1학년">1학년</option><option value="2학년">2학년</option><option value="3학년">3학년</option>
                                         </select>
                                     </div>
-                                    <div><input type="email" placeholder="학교 이메일 (@dogye.hs.kr)" value={signUpEmail} onChange={(e) => setSignUpEmail(e.target.value)} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm" /></div>
-                                    <div><input type="password" placeholder="비밀번호 지정 (6자리 이상)" value={signUpPassword} onChange={(e) => setSignUpPassword(e.target.value)} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm" /></div>
-                                    <div><input type="password" placeholder="비밀번호 재확인" value={signUpPasswordConfirm} onChange={(e) => setSignUpPasswordConfirm(e.target.value)} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 focus:outline-none text-sm" /></div>
+                                    <div><input type="email" placeholder="학교 이메일 (@dogye.hs.kr)" value={signUpEmail} onChange={(e) => setSignUpEmail(e.target.value)} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none text-sm" /></div>
+                                    <div><input type="password" placeholder="비밀번호 지정 (6자리 이상)" value={signUpPassword} onChange={(e) => setSignUpPassword(e.target.value)} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none text-sm" /></div>
+                                    <div><input type="password" placeholder="비밀번호 재확인" value={signUpPasswordConfirm} onChange={(e) => setSignUpPasswordConfirm(e.target.value)} className="w-full px-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:outline-none text-sm" /></div>
                                     <button type="submit" className="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-3.5 rounded-xl transition-all shadow-md mt-2">신규 정보 가입</button>
                                 </form>
                             )}
@@ -749,7 +749,7 @@
                     <header className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-sm">
                         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
                             <div className="flex items-center space-x-3">
-                                <div className="bg-blue-600 text-white p-2 rounded-lg"><i className="fa-solid fa-graduation-cap text-xl"></i></div>
+                                <div className="bg-emerald-600 text-white p-2 rounded-lg shadow-sm"><i className="fa-solid fa-graduation-cap text-xl"></i></div>
                                 <div>
                                     <h1 className="text-lg font-extrabold text-slate-900 tracking-tight flex items-center gap-1.5">
                                         Dogye Archive 3.2
@@ -758,7 +758,7 @@
                                                 triggerAlert("현재 브라우저 보안 정책으로 인해 오프라인 상태입니다.\n\n해결방법 1: 깃허브 페이지로 코드를 배포한 뒤 접속하세요.\n해결방법 2: VS Code의 Live Server(포트 5500 등)로 열어주세요.", "오프라인 모드 원인 분석");
                                             }} className="bg-emerald-100 text-emerald-800 text-[9px] font-bold px-2 py-0.5 rounded-full border border-emerald-200 cursor-pointer">🟢 로컬 테스트 모드 ❓</span>
                                         ) : (
-                                            <span className="bg-blue-100 text-blue-800 text-[9px] font-bold px-2 py-0.5 rounded-full border border-blue-200">🌐 클라우드 실시간 동기화</span>
+                                            <span className="bg-emerald-100 text-emerald-800 text-[9px] font-bold px-2 py-0.5 rounded-full border border-emerald-200">🌐 클라우드 실시간 동기화</span>
                                         )}
                                     </h1>
                                 </div>
@@ -767,7 +767,7 @@
                             <div className="flex items-center space-x-4">
                                 <span className="text-sm font-bold text-slate-800 hidden sm:inline-block">{user.name}님</span>
                                 {user.role === 'admin' && (
-                                    <button onClick={() => { setIsAdminConsoleOpen(true); setAdminTab("config"); }} className="text-slate-400 hover:text-slate-800 transition-all mr-1 animate-pulse" title="최고 관리자 콘솔 열기">
+                                    <button onClick={() => { setIsAdminConsoleOpen(true); setAdminTab("config"); }} className="text-slate-400 hover:text-emerald-700 transition-all mr-1 animate-pulse" title="최고 관리자 콘솔 열기">
                                         <i className="fa-solid fa-gear text-lg"></i>
                                     </button>
                                 )}
@@ -777,9 +777,9 @@
                     </header>
 
                     {noticeText && (
-                        <div className="bg-yellow-50 border-b border-yellow-100">
-                            <div className="max-w-7xl mx-auto py-3 px-4 sm:px-6 lg:px-8 flex items-center space-x-3 text-yellow-800 text-sm">
-                                <div className="bg-yellow-200 text-yellow-900 px-2 py-0.5 rounded-md font-bold shrink-0">공지</div>
+                        <div className="bg-emerald-50/80 border-b border-emerald-100">
+                            <div className="max-w-7xl mx-auto py-3 px-4 sm:px-6 lg:px-8 flex items-center space-x-3 text-emerald-900 text-sm">
+                                <div className="bg-emerald-200 text-emerald-900 px-2 py-0.5 rounded-md font-bold shrink-0">공지</div>
                                 <div className="flex-1 font-semibold">{noticeText}</div>
                             </div>
                         </div>
@@ -788,15 +788,15 @@
                     <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 w-full space-y-6">
                         
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div className="bg-gradient-to-br from-indigo-500 to-blue-600 rounded-2xl p-5 text-white shadow-md flex items-center justify-between">
+                            <div className="bg-gradient-to-br from-emerald-600 to-green-700 rounded-2xl p-5 text-white shadow-md flex items-center justify-between">
                                 <div>
-                                    <p className="text-blue-100 text-xs font-bold mb-1">도계고 3학년 수능 카운터</p>
+                                    <p className="text-emerald-100 text-xs font-bold mb-1">도계고 3학년 수능 카운터</p>
                                     <h2 className="text-2xl font-extrabold tracking-tight">{new Date(ddaySettings.csat).getFullYear()} 수능 D-{calculateDday(ddaySettings.csat)}</h2>
                                 </div>
                                 <div className="text-4xl text-white/30"><i className="fa-solid fa-clock-rotate-left"></i></div>
                             </div>
                             
-                            <div className="bg-gradient-to-br from-emerald-500 to-teal-600 rounded-2xl p-5 text-white shadow-md flex items-center justify-between">
+                            <div className="bg-gradient-to-br from-teal-600 to-emerald-800 rounded-2xl p-5 text-white shadow-md flex items-center justify-between">
                                 <div>
                                     <p className="text-teal-100 text-xs font-bold mb-1">내신 만점 대비</p>
                                     <h2 className="text-2xl font-extrabold tracking-tight">{ddaySettings.examName} D-{calculateDday(ddaySettings.examDate)}</h2>
@@ -808,12 +808,12 @@
                         <div className="flex items-center space-x-6 border-b border-slate-200">
                             <button 
                                 onClick={() => setActiveMainTab("materials")}
-                                className={`pb-3 text-sm font-bold transition-all border-b-2 ${activeMainTab === 'materials' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
+                                className={`pb-3 text-sm font-bold transition-all border-b-2 ${activeMainTab === 'materials' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
                                 <i className="fa-solid fa-folder-open mr-1.5"></i>학습 자료실
                             </button>
                             <button 
                                 onClick={() => setActiveMainTab("qna")}
-                                className={`pb-3 text-sm font-bold transition-all border-b-2 ${activeMainTab === 'qna' ? 'border-blue-600 text-blue-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
+                                className={`pb-3 text-sm font-bold transition-all border-b-2 ${activeMainTab === 'qna' ? 'border-emerald-600 text-emerald-600' : 'border-transparent text-slate-400 hover:text-slate-600'}`}>
                                 <i className="fa-solid fa-circle-question mr-1.5"></i>질문 / 자료요청
                             </button>
                         </div>
@@ -827,12 +827,12 @@
                                         placeholder={activeMainTab === 'materials' ? "과목, 작성자 이름으로 자료 검색" : "궁금한 질문이나 요청 내용 검색"}
                                         value={searchQuery}
                                         onChange={(e) => setSearchQuery(e.target.value)}
-                                        className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-blue-500 text-sm"
+                                        className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 text-sm"
                                     />
                                 </div>
                                 <button 
                                     onClick={() => activeMainTab === 'materials' ? setIsUploadOpen(true) : setIsQnaWriteOpen(true)}
-                                    className="w-full sm:w-auto shrink-0 bg-slate-800 hover:bg-slate-900 text-white font-bold px-5 py-2.5 rounded-xl shadow-sm transition-all text-sm flex items-center justify-center gap-1.5">
+                                    className="w-full sm:w-auto shrink-0 bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-5 py-2.5 rounded-xl shadow-sm transition-all text-sm flex items-center justify-center gap-1.5">
                                     <i className={`fa-solid ${activeMainTab === 'materials' ? 'fa-upload' : 'fa-pen'}`}></i>
                                     {activeMainTab === 'materials' ? '파일 제공하기' : '질문 작성하기'}
                                 </button>
@@ -843,7 +843,7 @@
                                     <div className="flex items-center space-x-1.5">
                                         <span className="text-xs font-bold text-slate-400 mr-1">학년:</span>
                                         {["전체", "1학년", "2학년", "3학년"].map(g => (
-                                            <button key={g} onClick={() => setActiveGradeFilter(g)} className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${activeGradeFilter === g ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{g}</button>
+                                            <button key={g} onClick={() => setActiveGradeFilter(g)} className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${activeGradeFilter === g ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{g}</button>
                                         ))}
                                         <div className="h-4 w-[1px] bg-slate-200 hidden sm:block mx-2"></div>
                                     </div>
@@ -852,7 +852,7 @@
                                 <div className="flex items-center space-x-1.5">
                                     <span className="text-xs font-bold text-slate-400 mr-1">과목:</span>
                                     {["전체", "국어", "영어", "수학", "통합과학", "물리학 I", "화학 I"].map(s => (
-                                        <button key={s} onClick={() => setActiveSubjectFilter(s)} className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${activeSubjectFilter === s ? 'bg-blue-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{s}</button>
+                                        <button key={s} onClick={() => setActiveSubjectFilter(s)} className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${activeSubjectFilter === s ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}>{s}</button>
                                     ))}
                                 </div>
                             </div>
@@ -861,14 +861,14 @@
                         {activeMainTab === 'materials' ? (
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                                 {filteredMaterials.map(mat => (
-                                    <div key={mat.id} className="bg-white rounded-2xl border border-slate-200 hover:border-blue-400 hover:shadow-md transition-all flex flex-col justify-between overflow-hidden cursor-pointer" onClick={() => { setSelectedMaterial(mat); setIsPreviewMode(false); }}>
+                                    <div key={mat.id} className="bg-white rounded-2xl border border-slate-200 hover:border-emerald-400 hover:shadow-md transition-all flex flex-col justify-between overflow-hidden cursor-pointer" onClick={() => { setSelectedMaterial(mat); setIsPreviewMode(false); }}>
                                         <div className="p-5">
                                             <div className="flex justify-between items-center mb-3">
                                                 <div className="flex gap-1.5">
-                                                    <span className="bg-blue-50 text-blue-600 text-[10px] font-bold px-2 py-0.5 rounded">{mat.grade}</span>
+                                                    <span className="bg-emerald-50 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded border border-emerald-100">{mat.grade}</span>
                                                     <span className="bg-slate-100 text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded">{mat.subject}</span>
                                                 </div>
-                                                <i className="fa-solid fa-file-arrow-down text-blue-400 text-lg" title="실제 파일 내장"></i>
+                                                <i className="fa-solid fa-file-arrow-down text-emerald-500 text-lg" title="실제 파일 내장"></i>
                                             </div>
                                             <h3 className="text-sm font-bold text-slate-800 line-clamp-2 mb-2 leading-snug">{mat.title}</h3>
                                             <p className="text-xs text-slate-500 line-clamp-2">{mat.description}</p>
@@ -876,8 +876,8 @@
                                         <div className="bg-slate-50 px-5 py-3 border-t border-slate-100 flex justify-between text-xs text-slate-400 font-medium">
                                             <span>작성자: {mat.uploader}</span>
                                             <div className="flex gap-3">
-                                                <span className="text-red-400"><i className="fa-solid fa-heart mr-1"></i>{mat.likes}</span>
-                                                <span className="text-blue-500"><i className="fa-solid fa-download mr-1"></i>{mat.downloads}</span>
+                                                <span className="text-rose-500"><i className="fa-solid fa-heart mr-1"></i>{mat.likes}</span>
+                                                <span className="text-emerald-600"><i className="fa-solid fa-download mr-1"></i>{mat.downloads}</span>
                                             </div>
                                         </div>
                                     </div>
@@ -891,8 +891,8 @@
                                         <li key={qna.id} className="p-5 hover:bg-slate-50 transition-all cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-4" onClick={() => setSelectedQna(qna)}>
                                             <div className="flex-1">
                                                 <div className="flex gap-1.5 mb-1.5">
-                                                    <span className="bg-purple-100 text-purple-700 text-[10px] font-bold px-2 py-0.5 rounded mb-2 inline-block">{qna.subject}</span>
-                                                    {qna.answers > 0 && <span className="bg-emerald-100 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded">답변완료</span>}
+                                                    <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded mb-2 inline-block">{qna.subject}</span>
+                                                    {qna.answers > 0 && <span className="bg-teal-100 text-teal-800 text-[10px] font-bold px-2 py-0.5 rounded">답변완료</span>}
                                                 </div>
                                                 <h3 className="text-sm font-bold text-slate-800">{qna.title}</h3>
                                                 <p className="text-xs text-slate-500 mt-1 line-clamp-1">{qna.content}</p>
@@ -932,7 +932,7 @@
                                                 <div className="w-full h-full flex flex-col items-center justify-center text-slate-400">
                                                     <i className="fa-solid fa-file-circle-exclamation text-4xl mb-3"></i>
                                                     <p>미리보기를 지원하지 않는 파일 형식입니다. (PDF 및 이미지만 가능)</p>
-                                                    <button onClick={() => handleDownload(selectedMaterial)} className="mt-4 bg-blue-600 text-white font-bold px-4 py-2 rounded-xl text-xs"><i className="fa-solid fa-download mr-1"></i>원본 다운로드</button>
+                                                    <button onClick={() => handleDownload(selectedMaterial)} className="mt-4 bg-emerald-600 text-white font-bold px-4 py-2 rounded-xl text-xs"><i className="fa-solid fa-download mr-1"></i>원본 다운로드</button>
                                                 </div>
                                             )}
                                         </div>
@@ -942,21 +942,21 @@
                                                 <h4 className="text-xs font-bold text-slate-400 uppercase mb-2">분석 및 설명</h4>
                                                 <p className="text-sm text-slate-700 bg-slate-50 p-4 rounded-xl border border-slate-100 whitespace-pre-wrap">{selectedMaterial.description}</p>
                                             </div>
-                                            <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 flex flex-col sm:flex-row items-center justify-between gap-4">
+                                            <div className="bg-emerald-50/70 p-4 rounded-xl border border-emerald-100 flex flex-col sm:flex-row items-center justify-between gap-4">
                                                 <div className="flex items-center space-x-3 w-full sm:w-auto overflow-hidden">
-                                                    <div className="bg-blue-600 text-white p-3 rounded-xl shrink-0"><i className="fa-solid fa-file-lines text-xl"></i></div>
+                                                    <div className="bg-emerald-600 text-white p-3 rounded-xl shrink-0"><i className="fa-solid fa-file-lines text-xl"></i></div>
                                                     <div className="truncate">
                                                         <p className="text-sm font-bold text-slate-700 truncate">{selectedMaterial.fileName}</p>
-                                                        <p className="text-[10px] text-slate-500">안전한 클라우드 파일</p>
+                                                        <p className="text-[10px] text-emerald-700 font-semibold">안전한 클라우드 파일</p>
                                                     </div>
                                                 </div>
                                                 <div className="flex gap-2 w-full sm:w-auto">
                                                     {isPdfOrImage(selectedMaterial.fileName) && (
-                                                        <button onClick={() => setIsPreviewMode(true)} className="flex-1 sm:flex-none bg-indigo-600 text-white font-bold px-4 py-2.5 rounded-xl shadow-md text-xs whitespace-nowrap">
+                                                        <button onClick={() => setIsPreviewMode(true)} className="flex-1 sm:flex-none bg-teal-700 hover:bg-teal-800 text-white font-bold px-4 py-2.5 rounded-xl shadow-md text-xs whitespace-nowrap">
                                                             <i className="fa-solid fa-eye mr-1"></i>미리보기
                                                         </button>
                                                     )}
-                                                    <button onClick={() => handleDownload(selectedMaterial)} className="flex-1 sm:flex-none bg-blue-600 text-white font-bold px-4 py-2.5 rounded-xl shadow-md text-xs whitespace-nowrap">
+                                                    <button onClick={() => handleDownload(selectedMaterial)} className="flex-1 sm:flex-none bg-emerald-600 hover:bg-emerald-700 text-white font-bold px-4 py-2.5 rounded-xl shadow-md text-xs whitespace-nowrap">
                                                         <i className="fa-solid fa-download mr-1"></i>다운로드
                                                     </button>
                                                 </div>
@@ -993,7 +993,7 @@
                             <div className="bg-white rounded-3xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden border border-slate-200 flex flex-col">
                                 <div className="p-6 border-b border-slate-100 flex items-start justify-between bg-slate-50">
                                     <div>
-                                        <span className="bg-purple-100 text-purple-700 text-[10px] font-bold px-2 py-0.5 rounded mb-2 inline-block">{selectedQna.subject}</span>
+                                        <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded mb-2 inline-block">{selectedQna.subject}</span>
                                         <h2 className="text-lg font-extrabold text-slate-800 leading-snug">{selectedQna.title}</h2>
                                         <p className="text-xs text-slate-400 mt-1">작성자: {selectedQna.author} | {selectedQna.date}</p>
                                     </div>
@@ -1019,8 +1019,8 @@
                                             {(selectedQna.comments || []).length === 0 && <p className="text-xs text-slate-400 text-center py-4">아직 답변이 없습니다. 아는 내용이라면 답변을 달아주세요!</p>}
                                         </div>
                                         <form onSubmit={(e) => handleCommentSubmit(e, selectedQna.id, true)} className="flex gap-2">
-                                            <input type="text" placeholder="도움이 되는 답변을 남겨주세요." value={commentInput} onChange={(e)=>setCommentInput(e.target.value)} className="flex-1 px-3 py-2 bg-white border border-slate-300 rounded-xl focus:ring-1 focus:ring-blue-500 text-xs" />
-                                            <button type="submit" className="bg-emerald-600 text-white px-4 rounded-xl text-xs font-bold shadow-sm">답변하기</button>
+                                            <input type="text" placeholder="도움이 되는 답변을 남겨주세요." value={commentInput} onChange={(e)=>setCommentInput(e.target.value)} className="flex-1 px-3 py-2 bg-white border border-slate-300 rounded-xl focus:ring-1 focus:ring-emerald-500 text-xs" />
+                                            <button type="submit" className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 rounded-xl text-xs font-bold shadow-sm">답변하기</button>
                                         </form>
                                     </div>
                                 </div>
@@ -1033,18 +1033,18 @@
                         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
                             <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200">
                                 <div className="p-5 border-b border-slate-100 flex items-center justify-between bg-slate-50">
-                                    <h2 className="text-base font-bold text-slate-800"><i className="fa-solid fa-pen text-purple-600 mr-2"></i>질문 / 자료 요청 작성</h2>
+                                    <h2 className="text-base font-bold text-slate-800"><i className="fa-solid fa-pen text-emerald-600 mr-2"></i>질문 / 자료 요청 작성</h2>
                                     <button onClick={() => setIsQnaWriteOpen(false)} className="text-slate-400 hover:text-slate-600"><i className="fa-solid fa-xmark text-lg"></i></button>
                                 </div>
                                 <form onSubmit={handleQnaSubmit} className="p-6 space-y-4">
-                                    <div><input type="text" placeholder="제목을 적어주세요 (예: 2학기 문학 기출 구합니다!)" value={newQnaTitle} onChange={(e)=>setNewQnaTitle(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-sm focus:ring-1 focus:ring-blue-500" /></div>
+                                    <div><input type="text" placeholder="제목을 적어주세요 (예: 2학기 문학 기출 구합니다!)" value={newQnaTitle} onChange={(e)=>setNewQnaTitle(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-sm focus:ring-1 focus:ring-emerald-500" /></div>
                                     <div>
                                         <select value={newQnaSubject} onChange={(e)=>setNewQnaSubject(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-sm focus:outline-none bg-white">
                                             <option value="국어">국어</option><option value="수학">수학</option><option value="영어">영어</option><option value="과학">과학</option><option value="기타">기타 요청</option>
                                         </select>
                                     </div>
-                                    <div><textarea placeholder="궁금한 문제나 필요한 자료를 상세히 적어주세요." value={newQnaContent} onChange={(e)=>setNewQnaContent(e.target.value)} rows="5" className="w-full px-3 py-2 border rounded-xl text-sm resize-none focus:ring-1 focus:ring-blue-500"></textarea></div>
-                                    <button type="submit" className="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 rounded-xl shadow text-sm">게시글 등록하기</button>
+                                    <div><textarea placeholder="궁금한 문제나 필요한 자료를 상세히 적어주세요." value={newQnaContent} onChange={(e)=>setNewQnaContent(e.target.value)} rows="5" className="w-full px-3 py-2 border rounded-xl text-sm resize-none focus:ring-1 focus:ring-emerald-500"></textarea></div>
+                                    <button type="submit" className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-3 rounded-xl shadow text-sm">게시글 등록하기</button>
                                 </form>
                             </div>
                         </div>
@@ -1055,37 +1055,37 @@
                         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
                             <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200">
                                 <div className="p-5 border-b border-slate-100 flex justify-between bg-slate-50">
-                                    <h2 className="text-base font-bold"><i className="fa-solid fa-file-arrow-up text-blue-600 mr-2"></i>클라우드 파일 업로드</h2>
+                                    <h2 className="text-base font-bold"><i className="fa-solid fa-file-arrow-up text-emerald-600 mr-2"></i>클라우드 파일 업로드</h2>
                                     <button onClick={() => { setIsUploadOpen(false); setUploadProgress(0); }} className="text-slate-400 hover:text-slate-600"><i className="fa-solid fa-xmark"></i></button>
                                 </div>
                                 <form onSubmit={handleUpload} className="p-6 space-y-4">
-                                    <input type="text" placeholder="자료 제목을 적어주세요" value={newTitle} onChange={(e)=>setNewTitle(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-xs focus:ring-1 focus:ring-blue-500" disabled={uploadProgress > 0} />
+                                    <input type="text" placeholder="자료 제목을 적어주세요" value={newTitle} onChange={(e)=>setNewTitle(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-xs focus:ring-1 focus:ring-emerald-500" disabled={uploadProgress > 0} />
                                     
                                     <div className="flex gap-2">
                                         <select value={newGrade} onChange={(e)=>setNewGrade(e.target.value)} className="flex-1 px-3 py-2 border rounded-xl text-xs" disabled={uploadProgress > 0}><option value="1학년">1학년</option><option value="2학년">2학년</option><option value="3학년">3학년</option></select>
                                         <select value={newSubject} onChange={(e)=>setNewSubject(e.target.value)} className="flex-1 px-3 py-2 border rounded-xl text-xs" disabled={uploadProgress > 0}><option value="국어">국어</option><option value="수학">수학</option><option value="영어">영어</option><option value="물리학 I">물리학 I</option><option value="화학 I">화학 I</option><option value="생명과학 I">생명과학 I</option><option value="지구과학 I">지구과학 I</option><option value="통합과학">통합과학</option><option value="통합사회">통합사회</option></select>
                                     </div>
                                     
-                                    <div className="bg-blue-50 border border-blue-200 rounded-xl p-4">
-                                        <label className="block text-[11px] font-bold text-blue-800 mb-2"><i className="fa-solid fa-paperclip mr-1"></i>실제 파일 첨부 (PDF, HWP, 이미지 등)</label>
-                                        <input type="file" id="file-upload-input" onChange={(e)=>setNewFile(e.target.files[0])} className="w-full text-xs bg-white rounded-lg p-2 border border-blue-100" disabled={uploadProgress > 0} />
+                                    <div className="bg-emerald-50 border border-emerald-200 rounded-xl p-4">
+                                        <label className="block text-[11px] font-bold text-emerald-800 mb-2"><i className="fa-solid fa-paperclip mr-1"></i>실제 파일 첨부 (PDF, HWP, 이미지 등)</label>
+                                        <input type="file" id="file-upload-input" onChange={(e)=>setNewFile(e.target.files[0])} className="w-full text-xs bg-white rounded-lg p-2 border border-emerald-100" disabled={uploadProgress > 0} />
                                         
                                         {uploadProgress > 0 && (
                                             <div className="mt-3">
-                                                <div className="flex justify-between text-[10px] font-bold text-blue-600 mb-1">
+                                                <div className="flex justify-between text-[10px] font-bold text-emerald-700 mb-1">
                                                     <span>클라우드 서버 전송 중...</span>
                                                     <span>{uploadProgress}%</span>
                                                 </div>
-                                                <div className="w-full bg-blue-100 rounded-full h-2">
-                                                    <div className="bg-blue-600 h-2 rounded-full transition-all duration-300 ease-out" style={{ width: `${uploadProgress}%` }}></div>
+                                                <div className="w-full bg-emerald-100 rounded-full h-2">
+                                                    <div className="bg-emerald-600 h-2 rounded-full transition-all duration-300 ease-out" style={{ width: `${uploadProgress}%` }}></div>
                                                 </div>
                                             </div>
                                         )}
                                     </div>
 
-                                    <textarea placeholder="자료에 대한 팁이나 오답노트를 적어주세요." value={newDescription} onChange={(e)=>setNewDescription(e.target.value)} rows="3" className="w-full px-3 py-2 border rounded-xl text-xs resize-none focus:ring-1 focus:ring-blue-500" disabled={uploadProgress > 0}></textarea>
+                                    <textarea placeholder="자료에 대한 팁이나 오답노트를 적어주세요." value={newDescription} onChange={(e)=>setNewDescription(e.target.value)} rows="3" className="w-full px-3 py-2 border rounded-xl text-xs resize-none focus:ring-1 focus:ring-emerald-500" disabled={uploadProgress > 0}></textarea>
                                     
-                                    <button type="submit" disabled={uploadProgress > 0} className={`w-full font-bold py-3 rounded-xl shadow-md text-sm transition-all ${uploadProgress > 0 ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}>
+                                    <button type="submit" disabled={uploadProgress > 0} className={`w-full font-bold py-3 rounded-xl shadow-md text-sm transition-all ${uploadProgress > 0 ? 'bg-slate-300 text-slate-500 cursor-not-allowed' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}`}>
                                         {uploadProgress > 0 ? '서버에 저장 중입니다...' : '도계 아카이브 등재 신청'}
                                     </button>
                                 </form>
@@ -1117,7 +1117,7 @@
                                                 value={editNotice} 
                                                 onChange={(e) => setEditNotice(e.target.value)} 
                                                 rows="2" 
-                                                className="w-full px-3 py-2 border rounded-xl text-xs focus:ring-1 focus:ring-blue-500 resize-none" 
+                                                className="w-full px-3 py-2 border rounded-xl text-xs focus:ring-1 focus:ring-emerald-500 resize-none" 
                                                 placeholder="공지할 내용을 자유롭게 적으세요."
                                                 required
                                             ></textarea>
@@ -1125,15 +1125,15 @@
 
                                         <div className="border-t border-slate-100 pt-3">
                                             <label className="block text-xs font-bold text-slate-500 mb-1.5">수능 날짜 설정</label>
-                                            <input type="date" value={editDday.csat} onChange={(e)=>setEditDday({...editDday, csat: e.target.value})} className="w-full px-3 py-2 border rounded-xl text-xs focus:ring-1 focus:ring-blue-500" required />
+                                            <input type="date" value={editDday.csat} onChange={(e)=>setEditDday({...editDday, csat: e.target.value})} className="w-full px-3 py-2 border rounded-xl text-xs focus:ring-1 focus:ring-emerald-500" required />
                                         </div>
 
                                         <div className="border-t border-slate-100 pt-3">
                                             <label className="block text-xs font-bold text-slate-500 mb-1.5">내신 시험 이름 (예: 2학기 중간고사)</label>
-                                            <input type="text" placeholder="시험 이름 입력" value={editDday.examName} onChange={(e)=>setEditDday({...editDday, examName: e.target.value})} className="w-full px-3 py-2 border rounded-xl text-xs focus:ring-1 focus:ring-blue-500 mb-3" required />
+                                            <input type="text" placeholder="시험 이름 입력" value={editDday.examName} onChange={(e)=>setEditDday({...editDday, examName: e.target.value})} className="w-full px-3 py-2 border rounded-xl text-xs focus:ring-1 focus:ring-emerald-500 mb-3" required />
                                             
                                             <label className="block text-xs font-bold text-slate-500 mb-1.5">내신 시험 날짜</label>
-                                            <input type="date" value={editDday.examDate} onChange={(e)=>setEditDday({...editDday, examDate: e.target.value})} className="w-full px-3 py-2 border rounded-xl text-xs focus:ring-1 focus:ring-blue-500" required />
+                                            <input type="date" value={editDday.examDate} onChange={(e)=>setEditDday({...editDday, examDate: e.target.value})} className="w-full px-3 py-2 border rounded-xl text-xs focus:ring-1 focus:ring-emerald-500" required />
                                         </div>
 
                                         <button type="submit" className="w-full bg-slate-800 hover:bg-slate-900 text-white font-bold py-3 rounded-xl shadow text-sm transition-all">설정 및 공지 클라우드 즉시 게시</button>
@@ -1147,7 +1147,7 @@
                                                 placeholder="이름, 학년, 이메일로 가입자 조회" 
                                                 value={userSearchQuery}
                                                 onChange={(e) => setUserSearchQuery(e.target.value)}
-                                                className="w-full pl-8 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:ring-1 focus:ring-blue-500"
+                                                className="w-full pl-8 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:ring-1 focus:ring-emerald-500"
                                             />
                                         </div>
 
