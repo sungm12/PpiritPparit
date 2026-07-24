@@ -51,7 +51,7 @@
         import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, addDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
 
-        // 전성민님의 진짜 Firebase API 설정값 연동완료
+        // 전성민님의 진짜 Firebase API 설정값
         const firebaseConfig = {
             apiKey: "AIzaSyBBDLP4uI9Mom_UMxKvnYDq9f2V72Y1fB4",
             authDomain: "dogye-archive.firebaseapp.com",
@@ -100,12 +100,19 @@
         const { useState, useEffect, useRef } = React;
         const SCHOOL_DOMAIN = "dogye.hs.kr";
 
+        // 계급 산출 함수
+        const getRankFromPosition = (pos) => {
+            if (pos === '최고 관리자') return 4;
+            if (pos === '학습부') return 3;
+            if (['회장', '부회장', '총무부', '행정부', '방송부', '홍보부', '체육부'].includes(pos)) return 2;
+            return 1; // 일반 학생
+        };
+
         function App() {
             const [user, setUser] = useState(null); 
             const [isLoginView, setIsLoginView] = useState(true);
             const [isLocalMode, setIsLocalMode] = useState(true); 
             const [isFirebaseLoading, setIsFirebaseLoading] = useState(true);
-            const [firebaseError, setFirebaseError] = useState("");
             
             // UI 탭 상태
             const [activeMainTab, setActiveMainTab] = useState("materials"); 
@@ -137,8 +144,8 @@
             const [isQnaWriteOpen, setIsQnaWriteOpen] = useState(false);
             const [isPreviewMode, setIsPreviewMode] = useState(false);
             
-            // 글로벌 실시간 공지 (클라우드 동기화 지원)
-            const [noticeText, setNoticeText] = useState("도계고등학교 학습 아카이브 3.2에 오신 것을 환영합니다! 공지 및 학사일정이 완벽하게 연동됩니다.");
+            // 글로벌 실시간 공지
+            const [noticeText, setNoticeText] = useState("도계고등학교 학습 아카이브에 오신 것을 환영합니다! 조직도 기반 다중 권한 시스템이 적용되었습니다.");
             const [editNotice, setEditNotice] = useState(noticeText);
 
             // 실제 파일 업로드 상태 관리
@@ -157,7 +164,7 @@
             
             // 최고 관리자 대시보드 및 학생 명단
             const [isAdminConsoleOpen, setIsAdminConsoleOpen] = useState(false);
-            const [adminTab, setAdminTab] = useState("config"); // config (공지/일정) 또는 users (학생관리)
+            const [adminTab, setAdminTab] = useState("config"); 
             const [usersList, setUsersList] = useState([]);
             const [userSearchQuery, setUserSearchQuery] = useState("");
 
@@ -196,7 +203,6 @@
                 return email.endsWith(`@${SCHOOL_DOMAIN}`);
             };
 
-            // D-Day 계산기
             const calculateDday = (targetDateStr) => {
                 const today = new Date();
                 today.setHours(0, 0, 0, 0); 
@@ -210,30 +216,41 @@
                 const restoreAndSetupLocal = () => {
                     const savedUser = localStorage.getItem("dogye_current_user");
                     if (savedUser) {
-                        try { setUser(JSON.parse(savedUser)); } catch (e) {}
+                        try { 
+                            const parsed = JSON.parse(savedUser);
+                            // 구버전 유저 호환성 패치
+                            if(parsed.role === 'admin' && !parsed.rank) { parsed.rank = 4; parsed.position = '최고 관리자'; }
+                            if(!parsed.rank) { parsed.rank = 1; parsed.position = '일반 학생'; }
+                            setUser(parsed); 
+                        } catch (e) {}
                     }
                     
                     const localUsers = JSON.parse(localStorage.getItem("dogye_archive_users") || "[]");
-                    if (!localUsers.some(u => u.email === "admin@dogye.hs.kr")) {
-                        localUsers.push({
-                            name: "최고관리자",
-                            email: "admin@dogye.hs.kr",
+                    
+                    // 기존 admin 계정을 삭제하고 secret으로 교체
+                    const filteredUsers = localUsers.filter(u => u.email !== "admin@dogye.hs.kr");
+                    if (!filteredUsers.some(u => u.email === "secret@dogye.hs.kr")) {
+                        filteredUsers.push({
+                            name: "secret",
+                            email: "secret@dogye.hs.kr",
                             password: "dogyehs2027",
-                            grade: "관리자 소속",
+                            grade: "시스템",
                             role: "admin",
+                            rank: 4,
+                            position: "최고 관리자",
                             schoolUserId: "admin_master_system"
                         });
-                        localStorage.setItem("dogye_archive_users", JSON.stringify(localUsers));
+                        localStorage.setItem("dogye_archive_users", JSON.stringify(filteredUsers));
                     }
                     
-                    // 관리자일 경우 미리 로컬 명단이라도 로드해둠
-                    const adminCheck = savedUser ? JSON.parse(savedUser) : null;
-                    if (adminCheck && adminCheck.role === "admin") {
-                        const filteredLocal = localUsers.filter(u => u.email !== "admin@dogye.hs.kr");
-                        setUsersList(filteredLocal);
+                    const currentUserCheck = savedUser ? JSON.parse(savedUser) : null;
+                    const currentUserRank = currentUserCheck?.rank || (currentUserCheck?.role === 'admin' ? 4 : 1);
+                    
+                    if (currentUserRank >= 2) {
+                        const others = filteredUsers.filter(u => u.email !== "secret@dogye.hs.kr");
+                        setUsersList(others);
                     }
 
-                    // 오프라인 상태일 때 로컬에 저장된 D-Day 및 공지 정보 불러오기
                     const savedDday = localStorage.getItem("dogye_dday_settings");
                     if (savedDday) {
                         try {
@@ -264,12 +281,18 @@
                                     listenToCloudQna();
                                     listenToCloudSettings();
                                     
-                                    // 로그인한 계정이 관리자라면 클라우드 학생 명부도 실시간으로 감시
+                                    // 클라우드에 남아있는 구버전 admin 계정 영구 파기 (자동 청소)
+                                    try {
+                                        const { doc, deleteDoc } = window.firebaseMethods;
+                                        deleteDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'users', 'admin_dogye_hs_kr')).catch(()=>{});
+                                    } catch(e) {}
+                                    
                                     const savedUser = localStorage.getItem("dogye_current_user");
                                     if (savedUser) {
                                         try {
                                             const parsed = JSON.parse(savedUser);
-                                            if (parsed.role === "admin") {
+                                            const cRank = parsed.rank || (parsed.role === 'admin' ? 4 : 1);
+                                            if (cRank >= 2) {
                                                 listenToCloudUsers();
                                             }
                                         } catch(e) {}
@@ -278,7 +301,6 @@
                                 setIsFirebaseLoading(false);
                             });
                         }).catch((err) => {
-                            setFirebaseError(err.message || String(err));
                             setIsLocalMode(true);
                             setIsFirebaseLoading(false);
                         });
@@ -295,18 +317,16 @@
                 return () => window.removeEventListener('firebase-initialized', handleFirebaseInitEvent);
             }, []);
 
-            // 최고관리자 접속 감지 시 학생 명단 감시 실행용
             useEffect(() => {
-                if (user && user.role === "admin" && !isLocalMode) {
+                const userRank = user?.rank || (user?.role === 'admin' ? 4 : 1);
+                if (user && userRank >= 2 && !isLocalMode) {
                     listenToCloudUsers();
                 }
             }, [user, isLocalMode]);
 
-            // Firestore 실시간 리스너 (자료실)
             const listenToCloudMaterials = () => {
                 const { collection, onSnapshot } = window.firebaseMethods;
                 const materialsRef = collection(window.db, 'artifacts', window.appId, 'public', 'data', 'materials');
-                
                 onSnapshot(materialsRef, (snapshot) => {
                     const cloudList = [];
                     snapshot.forEach((d) => { cloudList.push({ ...d.data(), id: d.id }); });
@@ -315,11 +335,9 @@
                 }, () => setIsLocalMode(true));
             };
 
-            // Firestore 실시간 리스너 (Q&A)
             const listenToCloudQna = () => {
                 const { collection, onSnapshot } = window.firebaseMethods;
                 const qnaRef = collection(window.db, 'artifacts', window.appId, 'public', 'data', 'qna');
-                
                 onSnapshot(qnaRef, (snapshot) => {
                     const qList = [];
                     snapshot.forEach((d) => { qList.push({ ...d.data(), id: d.id }); });
@@ -328,11 +346,9 @@
                 });
             };
 
-            // Firestore 실시간 리스너 (일정 및 공지 설정)
             const listenToCloudSettings = () => {
                 const { doc, onSnapshot } = window.firebaseMethods;
                 const settingsRef = doc(window.db, 'artifacts', window.appId, 'public', 'data', 'settings', 'config');
-                
                 onSnapshot(settingsRef, (docSnap) => {
                     if (docSnap.exists()) {
                         const data = docSnap.data();
@@ -348,7 +364,6 @@
                 });
             };
 
-            // Firestore 실시간 리스너 (학생 계정 정보 관리자 조회용)
             const listenToCloudUsers = () => {
                 const { collection, onSnapshot } = window.firebaseMethods;
                 const usersRef = collection(window.db, 'artifacts', window.appId, 'public', 'data', 'users');
@@ -357,7 +372,12 @@
                     const uList = [];
                     snapshot.forEach((d) => {
                         const userData = d.data();
-                        if (userData.email !== "admin@dogye.hs.kr") {
+                        // 최고 관리자 secret 및 구버전 admin은 목록에서 숨김
+                        if (userData.email !== "secret@dogye.hs.kr" && userData.email !== "admin@dogye.hs.kr") {
+                            if (!userData.rank) {
+                                userData.rank = 1;
+                                userData.position = '일반 학생';
+                            }
                             uList.push({ ...userData, id: d.id });
                         }
                     });
@@ -367,16 +387,21 @@
                 });
             };
 
-            // 로그인 및 회원가입
             const handleLogin = (e) => {
                 e.preventDefault();
                 if (!loginEmail || !loginPassword) return triggerAlert("이메일 주소와 패스워드를 올바르게 입력해 주세요.");
                 
-                if (loginEmail === "admin@dogye.hs.kr" && loginPassword === "dogyehs2027") {
-                    const adminSession = { name: "최고관리자", email: "admin@dogye.hs.kr", grade: "관리자 소속", role: "admin", schoolUserId: "admin_master_system" };
+                // 구버전 admin 계정 원천 차단
+                if (loginEmail === "admin@dogye.hs.kr") {
+                    return triggerAlert("이 계정은 보안상 영구 폐기되었습니다. 새로운 마스터(secret) 계정을 사용해 주세요.");
+                }
+
+                // 최고 관리자 secret 계정 로그인
+                if (loginEmail === "secret@dogye.hs.kr" && loginPassword === "dogyehs2027") {
+                    const adminSession = { name: "secret", email: "secret@dogye.hs.kr", grade: "시스템", role: "admin", rank: 4, position: "최고 관리자", schoolUserId: "admin_master_system" };
                     setUser(adminSession);
                     localStorage.setItem("dogye_current_user", JSON.stringify(adminSession));
-                    showToast("최고 마스터 관리자 등급으로 접속에 성공했습니다!");
+                    showToast("최상위 [secret] 권한으로 시스템에 접속했습니다.");
                     return;
                 }
 
@@ -386,6 +411,7 @@
                 const found = localUsers.find(u => u.email === loginEmail);
 
                 if (found && found.password === loginPassword) {
+                    if (!found.rank) { found.rank = 1; found.position = "일반 학생"; } // 호환성 패치
                     setUser(found);
                     localStorage.setItem("dogye_current_user", JSON.stringify(found));
                     showToast(`반가워요, ${found.name}님!`);
@@ -403,7 +429,17 @@
                 const localUsers = JSON.parse(localStorage.getItem("dogye_archive_users") || "[]");
                 if (localUsers.some(u => u.email === signUpEmail)) return triggerAlert("이미 가입된 이메일입니다.");
 
-                const newUser = { name: signUpName, email: signUpEmail, password: signUpPassword, grade: signUpGrade, role: "student", schoolUserId: "student_" + Date.now() };
+                // 기본 rank 1 (일반 학생) 부여
+                const newUser = { 
+                    name: signUpName, 
+                    email: signUpEmail, 
+                    password: signUpPassword, 
+                    grade: signUpGrade, 
+                    role: "student", 
+                    rank: 1, 
+                    position: "일반 학생", 
+                    schoolUserId: "student_" + Date.now() 
+                };
                 localUsers.push(newUser);
                 localStorage.setItem("dogye_archive_users", JSON.stringify(localUsers));
 
@@ -423,7 +459,6 @@
                 showToast("로그아웃 되었습니다.");
             };
 
-            // 진짜 파일 업로드 로직 (Firebase Storage)
             const handleUpload = async (e) => {
                 e.preventDefault();
                 if (!user) return;
@@ -475,7 +510,7 @@
                                 fileName: newFile.name,
                                 downloads: 0,
                                 likes: 0,
-                                isVerified: user.role === "admin",
+                                isVerified: (user.rank || 1) >= 2,
                                 description: newDescription,
                                 comments: [],
                                 date: new Date().toISOString().split('T')[0],
@@ -503,18 +538,6 @@
                 }
             };
 
-            const handleLike = async (mId) => {
-                if (!user) return;
-                if (!isLocalMode && window.firebaseMethods) {
-                    const { doc, updateDoc } = window.firebaseMethods;
-                    const target = materials.find(m => m.id === mId);
-                    if(target) {
-                        updateDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'materials', mId), { likes: (target.likes || 0) + 1 }).catch(()=>{});
-                    }
-                }
-            };
-
-            // 실제 파일 다운로드 로직
             const handleDownload = async (mat) => {
                 if (!user) return;
                 
@@ -528,7 +551,6 @@
                     showToast("원본 파일을 다운로드합니다.");
                     return;
                 }
-
                 triggerAlert("자료 파일을 찾을 수 없습니다.");
             };
 
@@ -588,7 +610,8 @@
             };
 
             const deleteMaterial = async (mId) => {
-                if (user?.role !== "admin") return;
+                const currentUserRank = user?.rank || (user?.role === 'admin' ? 4 : 1);
+                if (currentUserRank < 2) return;
                 triggerConfirm("이 자료를 영구 파기하시겠습니까? (실제 파일도 서버에서 삭제됩니다)", async () => {
                     const target = materials.find(m => m.id === mId);
                     setSelectedMaterial(null);
@@ -608,7 +631,8 @@
             };
             
             const deleteQna = async (qId) => {
-                if (user?.role !== "admin") return;
+                const currentUserRank = user?.rank || (user?.role === 'admin' ? 4 : 1);
+                if (currentUserRank < 2) return;
                 triggerConfirm("이 게시글을 영구 파기하시겠습니까?", async () => {
                     setSelectedQna(null);
                     if (!isLocalMode && window.firebaseMethods) {
@@ -619,10 +643,16 @@
                 });
             }
 
-            // 관리자의 학생 영구 제명/탈퇴 제어 권한
-            const deleteUser = async (userEmail) => {
-                if (user?.role !== "admin") return;
-                triggerConfirm(`[${userEmail}] 학생 계정을 아카이브에서 강제 추방 및 영구 탈퇴 처리하시겠습니까?`, async () => {
+            // 계급 정지(삭제) 함수
+            const deleteUser = async (userEmail, targetRank) => {
+                const currentUserRank = user?.rank || 1;
+                
+                // 최고 관리자(Rank 4)는 예외적으로 모두 정지 가능. 그 외는 자신보다 '낮은' 계급만 정지 가능
+                if (currentUserRank <= targetRank && currentUserRank !== 4) {
+                    return triggerAlert("본인보다 높거나 같은 계급의 관리자는 정지시킬 수 없습니다.");
+                }
+
+                triggerConfirm(`[${userEmail}] 계정을 아카이브에서 강제 추방 및 영구 탈퇴 처리하시겠습니까?`, async () => {
                     const localUsers = JSON.parse(localStorage.getItem("dogye_archive_users") || "[]");
                     const filteredLocal = localUsers.filter(u => u.email !== userEmail);
                     localStorage.setItem("dogye_archive_users", JSON.stringify(filteredLocal));
@@ -633,7 +663,7 @@
                         try {
                             const docId = sanitizeEmailForDocId(userEmail);
                             await deleteDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'users', docId));
-                            showToast("선택한 학생 계정이 클라우드에서 안전하게 소멸되었습니다.");
+                            showToast("해당 계정이 클라우드에서 안전하게 소멸(정지)되었습니다.");
                         } catch (err) {
                             console.error(err);
                             showToast("클라우드 계정 삭제 권한 처리에 실패했습니다.", "error");
@@ -644,7 +674,40 @@
                 });
             };
 
-            // 관리자 콘솔 설정 저장 로직 (학사일정 및 실시간 공지사항 통합)
+            // 직책(계급) 부여 함수 - Rank 4 최고 관리자 전용
+            const handleUpdateUserPosition = async (targetEmail, newPosition) => {
+                const currentUserRank = user?.rank || 1;
+                if (currentUserRank !== 4) return triggerAlert("직책 부여 및 변경은 최고 관리자(Rank 4)만 가능합니다.");
+
+                const targetNewRank = getRankFromPosition(newPosition);
+
+                const localUsers = JSON.parse(localStorage.getItem("dogye_archive_users") || "[]");
+                const userIndex = localUsers.findIndex(u => u.email === targetEmail);
+                if (userIndex > -1) {
+                    localUsers[userIndex].position = newPosition;
+                    localUsers[userIndex].rank = targetNewRank;
+                    localStorage.setItem("dogye_archive_users", JSON.stringify(localUsers));
+                }
+                
+                setUsersList(prev => prev.map(u => u.email === targetEmail ? { ...u, position: newPosition, rank: targetNewRank } : u));
+                
+                if (!isLocalMode && window.firebaseMethods) {
+                    const { doc, updateDoc } = window.firebaseMethods;
+                    try {
+                        await updateDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'users', sanitizeEmailForDocId(targetEmail)), {
+                            position: newPosition,
+                            rank: targetNewRank
+                        });
+                        showToast(`직책이 [${newPosition}] (으)로 변경되었습니다.`);
+                    } catch(e) {
+                        console.error(e);
+                        triggerAlert("클라우드 통신 오류로 권한 부여에 실패했습니다.");
+                    }
+                } else {
+                    showToast(`[로컬 모드] 직책이 [${newPosition}] (으)로 변경되었습니다.`);
+                }
+            };
+
             const handleAdminSettingsSave = async (e) => {
                 e.preventDefault();
                 setDdaySettings(editDday);
@@ -660,11 +723,9 @@
                             dday: editDday,
                             notice: editNotice
                         });
-                    } catch (err) {
-                        console.error(err);
-                    }
+                    } catch (err) {}
                 }
-                showToast("공지사항 및 학사일정 정보가 전교생 채널에 업데이트되었습니다!");
+                showToast("공지사항 및 학사일정 정보가 업데이트되었습니다!");
                 setIsAdminConsoleOpen(false);
             };
 
@@ -674,7 +735,6 @@
                 return ['pdf', 'png', 'jpg', 'jpeg', 'gif'].includes(ext);
             };
 
-            // 검색 필터링
             const filteredMaterials = materials.filter(m => {
                 const matchSearch = m.title.toLowerCase().includes(searchQuery.toLowerCase()) || m.subject.toLowerCase().includes(searchQuery.toLowerCase()) || m.uploader.toLowerCase().includes(searchQuery.toLowerCase());
                 const matchGrade = activeGradeFilter === "전체" ? true : m.grade === activeGradeFilter;
@@ -688,9 +748,8 @@
                 return matchSearch && matchSubject;
             });
 
-            // 학생 관리 명단 필터링
             const filteredUsers = usersList.filter(u => {
-                return u.name.includes(userSearchQuery) || u.email.includes(userSearchQuery) || u.grade.includes(userSearchQuery);
+                return u.name.includes(userSearchQuery) || u.email.includes(userSearchQuery) || (u.position && u.position.includes(userSearchQuery)) || u.grade.includes(userSearchQuery);
             });
 
             if (isFirebaseLoading && isLocalMode === false) {
@@ -744,6 +803,8 @@
                 );
             }
 
+            const currentUserRank = user.rank || (user.role === 'admin' ? 4 : 1);
+
             return (
                 <div className="flex flex-col min-h-screen bg-slate-50">
                     <header className="bg-white border-b border-slate-200 sticky top-0 z-40 shadow-sm">
@@ -765,9 +826,12 @@
                             </div>
                             
                             <div className="flex items-center space-x-4">
-                                <span className="text-sm font-bold text-slate-800 hidden sm:inline-block">{user.name}님</span>
-                                {user.role === 'admin' && (
-                                    <button onClick={() => { setIsAdminConsoleOpen(true); setAdminTab("config"); }} className="text-slate-400 hover:text-emerald-700 transition-all mr-1 animate-pulse" title="최고 관리자 콘솔 열기">
+                                <span className="text-sm font-bold text-slate-800 hidden sm:inline-block">
+                                    {currentUserRank >= 2 && <span className={`text-[10px] px-1.5 py-0.5 rounded-md mr-1.5 ${currentUserRank === 4 ? 'bg-purple-100 text-purple-800' : currentUserRank === 3 ? 'bg-blue-100 text-blue-800' : 'bg-emerald-100 text-emerald-800'}`}>{user.position || '관리자'}</span>}
+                                    {user.name}님
+                                </span>
+                                {currentUserRank >= 2 && (
+                                    <button onClick={() => { setIsAdminConsoleOpen(true); setAdminTab("config"); }} className="text-slate-400 hover:text-emerald-700 transition-all mr-1 animate-pulse" title="관리자 시스템 오픈">
                                         <i className="fa-solid fa-gear text-lg"></i>
                                     </button>
                                 )}
@@ -968,7 +1032,7 @@
                                         <div className="space-y-4">
                                             <div className="flex justify-between text-xs text-slate-400 border-b border-slate-100 pb-2">
                                                 <span>작성자: {selectedMaterial.uploader}</span>
-                                                {user?.role === "admin" && <button onClick={() => deleteMaterial(selectedMaterial.id)} className="text-red-500 font-bold"><i className="fa-solid fa-trash mr-1"></i>강제 파기</button>}
+                                                {currentUserRank >= 2 && <button onClick={() => deleteMaterial(selectedMaterial.id)} className="text-red-500 font-bold"><i className="fa-solid fa-trash mr-1"></i>강제 파기</button>}
                                             </div>
                                             <h4 className="text-xs font-bold text-slate-500">댓글 피드백</h4>
                                             <div className="space-y-3 max-h-40 overflow-y-auto">
@@ -1007,7 +1071,7 @@
                                     <div className="space-y-4 pt-4 border-t border-slate-100">
                                         <div className="flex justify-between items-center">
                                             <h4 className="text-xs font-bold text-slate-500">답변 및 댓글 ({selectedQna.answers || 0})</h4>
-                                            {user?.role === "admin" && <button onClick={() => deleteQna(selectedQna.id)} className="text-red-500 text-xs font-bold"><i className="fa-solid fa-trash mr-1"></i>게시글 삭제</button>}
+                                            {currentUserRank >= 2 && <button onClick={() => deleteQna(selectedQna.id)} className="text-red-500 text-xs font-bold"><i className="fa-solid fa-trash mr-1"></i>게시글 삭제</button>}
                                         </div>
                                         <div className="space-y-3 max-h-60 overflow-y-auto">
                                             {(selectedQna.comments || []).map(c => (
@@ -1099,7 +1163,7 @@
                             <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200">
                                 <div className="p-5 border-b border-slate-100 bg-slate-800 text-white">
                                     <div className="flex items-center justify-between mb-3">
-                                        <h2 className="text-base font-bold"><i className="fa-solid fa-gear text-slate-300 mr-2"></i>최고 관리자 마스터 콘솔</h2>
+                                        <h2 className="text-base font-bold"><i className="fa-solid fa-gear text-slate-300 mr-2"></i>마스터 관리자 시스템</h2>
                                         <button onClick={() => setIsAdminConsoleOpen(false)} className="text-slate-400 hover:text-white"><i className="fa-solid fa-xmark text-lg"></i></button>
                                     </div>
                                     
@@ -1153,21 +1217,42 @@
 
                                         <div className="max-h-[50vh] overflow-y-auto border border-slate-100 rounded-xl divide-y divide-slate-100 bg-slate-50">
                                             {filteredUsers.map(u => (
-                                                <div key={u.id || u.email} className="p-3 flex items-center justify-between text-xs hover:bg-slate-100 transition-all">
-                                                    <div className="overflow-hidden pr-2">
-                                                        <div className="flex items-center gap-1.5">
+                                                <div key={u.id || u.email} className="p-3 flex flex-col sm:flex-row sm:items-center justify-between text-xs hover:bg-slate-100 transition-all gap-2">
+                                                    <div className="overflow-hidden pr-2 flex-1">
+                                                        <div className="flex items-center gap-1.5 mb-1">
                                                             <span className="font-bold text-slate-800">{u.name}</span>
                                                             <span className="bg-slate-200 text-slate-600 text-[9px] px-1.5 py-0.5 rounded-full font-bold">{u.grade}</span>
+                                                            {u.rank >= 2 && <span className="bg-emerald-100 text-emerald-800 text-[9px] px-1.5 py-0.5 rounded-full font-bold">{u.position}</span>}
                                                         </div>
                                                         <div className="text-slate-400 text-[10px] truncate">{u.email}</div>
                                                     </div>
-                                                    <button 
-                                                        onClick={() => deleteUser(u.email)} 
-                                                        className="text-red-500 hover:bg-red-50 px-2.5 py-1.5 rounded-lg border border-red-200 hover:border-red-500 font-bold text-[10px] transition-all shrink-0"
-                                                        title="이 계정을 강제 제명 및 데이터 탈퇴 처리합니다."
-                                                    >
-                                                        강제 탈퇴
-                                                    </button>
+                                                    
+                                                    <div className="flex items-center gap-2 shrink-0">
+                                                        {currentUserRank === 4 && (
+                                                            <select 
+                                                                value={u.position || '일반 학생'} 
+                                                                onChange={(e) => handleUpdateUserPosition(u.email, e.target.value)}
+                                                                className="text-[10px] font-bold border border-slate-300 rounded-lg px-2 py-1.5 bg-white text-slate-700 focus:ring-1 focus:ring-emerald-500 focus:outline-none"
+                                                            >
+                                                                <option value="일반 학생">일반 학생 (Rank 1)</option>
+                                                                <option value="학습부">학습부 (Rank 3)</option>
+                                                                <option value="회장">회장 (Rank 2)</option>
+                                                                <option value="부회장">부회장 (Rank 2)</option>
+                                                                <option value="총무부">총무부 (Rank 2)</option>
+                                                                <option value="행정부">행정부 (Rank 2)</option>
+                                                                <option value="방송부">방송부 (Rank 2)</option>
+                                                                <option value="홍보부">홍보부 (Rank 2)</option>
+                                                                <option value="체육부">체육부 (Rank 2)</option>
+                                                            </select>
+                                                        )}
+                                                        <button 
+                                                            onClick={() => deleteUser(u.email, u.rank || 1)} 
+                                                            className="text-red-500 hover:bg-red-50 px-2.5 py-1.5 rounded-lg border border-red-200 hover:border-red-500 font-bold text-[10px] transition-all"
+                                                            title="권한 하위 계정을 정지 및 탈퇴 처리합니다."
+                                                        >
+                                                            계정 정지
+                                                        </button>
+                                                    </div>
                                                 </div>
                                             ))}
                                             {filteredUsers.length === 0 && (
