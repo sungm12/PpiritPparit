@@ -165,6 +165,7 @@
             // 최고 관리자 대시보드 및 학생 명단
             const [isAdminConsoleOpen, setIsAdminConsoleOpen] = useState(false);
             const [adminTab, setAdminTab] = useState("config"); 
+            const [adminUserSubTab, setAdminUserSubTab] = useState("active"); // active, suspended, security
             const [usersList, setUsersList] = useState([]);
             const [userSearchQuery, setUserSearchQuery] = useState("");
 
@@ -218,7 +219,6 @@
                     if (savedUser) {
                         try { 
                             const parsed = JSON.parse(savedUser);
-                            // 구버전 유저 호환성 패치
                             if(parsed.role === 'admin' && !parsed.rank) { parsed.rank = 4; parsed.position = '최고 관리자'; }
                             if(!parsed.rank) { parsed.rank = 1; parsed.position = '일반 학생'; }
                             setUser(parsed); 
@@ -227,7 +227,6 @@
                     
                     const localUsers = JSON.parse(localStorage.getItem("dogye_archive_users") || "[]");
                     
-                    // 기존 admin 계정을 삭제하고 secret으로 교체
                     const filteredUsers = localUsers.filter(u => u.email !== "admin@dogye.hs.kr");
                     if (!filteredUsers.some(u => u.email === "secret@dogye.hs.kr")) {
                         filteredUsers.push({
@@ -238,6 +237,7 @@
                             role: "admin",
                             rank: 4,
                             position: "최고 관리자",
+                            status: "active",
                             schoolUserId: "admin_master_system"
                         });
                         localStorage.setItem("dogye_archive_users", JSON.stringify(filteredUsers));
@@ -281,7 +281,6 @@
                                     listenToCloudQna();
                                     listenToCloudSettings();
                                     
-                                    // 클라우드에 남아있는 구버전 admin 계정 영구 파기 (자동 청소)
                                     try {
                                         const { doc, deleteDoc } = window.firebaseMethods;
                                         deleteDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'users', 'admin_dogye_hs_kr')).catch(()=>{});
@@ -372,11 +371,13 @@
                     const uList = [];
                     snapshot.forEach((d) => {
                         const userData = d.data();
-                        // 최고 관리자 secret 및 구버전 admin은 목록에서 숨김
                         if (userData.email !== "secret@dogye.hs.kr" && userData.email !== "admin@dogye.hs.kr") {
                             if (!userData.rank) {
                                 userData.rank = 1;
                                 userData.position = '일반 학생';
+                            }
+                            if (!userData.status) {
+                                userData.status = 'active'; // active or suspended
                             }
                             uList.push({ ...userData, id: d.id });
                         }
@@ -391,14 +392,12 @@
                 e.preventDefault();
                 if (!loginEmail || !loginPassword) return triggerAlert("이메일 주소와 패스워드를 올바르게 입력해 주세요.");
                 
-                // 구버전 admin 계정 원천 차단
                 if (loginEmail === "admin@dogye.hs.kr") {
                     return triggerAlert("이 계정은 보안상 영구 폐기되었습니다. 새로운 마스터(secret) 계정을 사용해 주세요.");
                 }
 
-                // 최고 관리자 secret 계정 로그인
                 if (loginEmail === "secret@dogye.hs.kr" && loginPassword === "dogyehs2027") {
-                    const adminSession = { name: "secret", email: "secret@dogye.hs.kr", grade: "시스템", role: "admin", rank: 4, position: "최고 관리자", schoolUserId: "admin_master_system" };
+                    const adminSession = { name: "secret", email: "secret@dogye.hs.kr", grade: "시스템", role: "admin", rank: 4, position: "최고 관리자", status: "active", schoolUserId: "admin_master_system" };
                     setUser(adminSession);
                     localStorage.setItem("dogye_current_user", JSON.stringify(adminSession));
                     showToast("최상위 [secret] 권한으로 시스템에 접속했습니다.");
@@ -411,7 +410,10 @@
                 const found = localUsers.find(u => u.email === loginEmail);
 
                 if (found && found.password === loginPassword) {
-                    if (!found.rank) { found.rank = 1; found.position = "일반 학생"; } // 호환성 패치
+                    if (found.status === 'suspended') {
+                        return triggerAlert("관리자에 의해 사이트 이용이 정지된 계정입니다. 부서에 문의하세요.");
+                    }
+                    if (!found.rank) { found.rank = 1; found.position = "일반 학생"; } 
                     setUser(found);
                     localStorage.setItem("dogye_current_user", JSON.stringify(found));
                     showToast(`반가워요, ${found.name}님!`);
@@ -429,7 +431,6 @@
                 const localUsers = JSON.parse(localStorage.getItem("dogye_archive_users") || "[]");
                 if (localUsers.some(u => u.email === signUpEmail)) return triggerAlert("이미 가입된 이메일입니다.");
 
-                // 기본 rank 1 (일반 학생) 부여
                 const newUser = { 
                     name: signUpName, 
                     email: signUpEmail, 
@@ -438,6 +439,7 @@
                     role: "student", 
                     rank: 1, 
                     position: "일반 학생", 
+                    status: "active",
                     schoolUserId: "student_" + Date.now() 
                 };
                 localUsers.push(newUser);
@@ -623,7 +625,7 @@
                             try {
                                 const fileRef = ref(window.storage, `materials/${mId}_${target.fileName}`);
                                 await deleteObject(fileRef);
-                            } catch(e) { console.warn("Storage deletion failed or file doesn't exist.") }
+                            } catch(e) { console.warn("Storage deletion failed.") }
                         }
                     }
                     showToast("자료와 실제 파일이 모두 완전 삭제되었습니다.");
@@ -643,38 +645,69 @@
                 });
             }
 
-            // 계급 정지(삭제) 함수
-            const deleteUser = async (userEmail, targetRank) => {
+            // 계정 정지 (상태를 suspended로 변경)
+            const suspendUser = async (userEmail, targetRank) => {
                 const currentUserRank = user?.rank || 1;
                 
-                // 최고 관리자(Rank 4)는 예외적으로 모두 정지 가능. 그 외는 자신보다 '낮은' 계급만 정지 가능
                 if (currentUserRank <= targetRank && currentUserRank !== 4) {
                     return triggerAlert("본인보다 높거나 같은 계급의 관리자는 정지시킬 수 없습니다.");
                 }
 
-                triggerConfirm(`[${userEmail}] 계정을 아카이브에서 강제 추방 및 영구 탈퇴 처리하시겠습니까?`, async () => {
+                triggerConfirm(`[${userEmail}] 계정을 정지하시겠습니까? (이 사용자는 더 이상 로그인할 수 없습니다.)`, async () => {
                     const localUsers = JSON.parse(localStorage.getItem("dogye_archive_users") || "[]");
-                    const filteredLocal = localUsers.filter(u => u.email !== userEmail);
-                    localStorage.setItem("dogye_archive_users", JSON.stringify(filteredLocal));
-                    setUsersList(prev => prev.filter(u => u.email !== userEmail));
+                    const uIndex = localUsers.findIndex(u => u.email === userEmail);
+                    if(uIndex > -1) {
+                        localUsers[uIndex].status = "suspended";
+                        localStorage.setItem("dogye_archive_users", JSON.stringify(localUsers));
+                    }
+                    
+                    setUsersList(prev => prev.map(u => u.email === userEmail ? { ...u, status: "suspended" } : u));
 
                     if (!isLocalMode && window.firebaseMethods) {
-                        const { doc, deleteDoc } = window.firebaseMethods;
+                        const { doc, updateDoc } = window.firebaseMethods;
                         try {
                             const docId = sanitizeEmailForDocId(userEmail);
-                            await deleteDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'users', docId));
-                            showToast("해당 계정이 클라우드에서 안전하게 소멸(정지)되었습니다.");
+                            await updateDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'users', docId), { status: "suspended" });
+                            showToast("해당 계정이 정지 보관함으로 이동되었습니다.");
                         } catch (err) {
                             console.error(err);
-                            showToast("클라우드 계정 삭제 권한 처리에 실패했습니다.", "error");
                         }
                     } else {
-                        showToast("로컬 모드에서 학생 계정이 강제 탈퇴되었습니다.");
+                        showToast("로컬 모드에서 학생 계정이 정지되었습니다.");
                     }
                 });
             };
 
-            // 직책(계급) 부여 함수 - Rank 4 최고 관리자 전용
+            // 계정 복구 (상태를 active로 변경)
+            const restoreUser = async (userEmail) => {
+                const currentUserRank = user?.rank || 1;
+                if (currentUserRank < 2) return;
+
+                triggerConfirm(`[${userEmail}] 계정을 다시 복구하여 접속을 허용하시겠습니까?`, async () => {
+                    const localUsers = JSON.parse(localStorage.getItem("dogye_archive_users") || "[]");
+                    const uIndex = localUsers.findIndex(u => u.email === userEmail);
+                    if(uIndex > -1) {
+                        localUsers[uIndex].status = "active";
+                        localStorage.setItem("dogye_archive_users", JSON.stringify(localUsers));
+                    }
+                    
+                    setUsersList(prev => prev.map(u => u.email === userEmail ? { ...u, status: "active" } : u));
+
+                    if (!isLocalMode && window.firebaseMethods) {
+                        const { doc, updateDoc } = window.firebaseMethods;
+                        try {
+                            const docId = sanitizeEmailForDocId(userEmail);
+                            await updateDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'users', docId), { status: "active" });
+                            showToast("해당 계정이 정상적으로 복구되었습니다!");
+                        } catch (err) {
+                            console.error(err);
+                        }
+                    } else {
+                        showToast("로컬 모드에서 학생 계정이 복구되었습니다.");
+                    }
+                });
+            };
+
             const handleUpdateUserPosition = async (targetEmail, newPosition) => {
                 const currentUserRank = user?.rank || 1;
                 if (currentUserRank !== 4) return triggerAlert("직책 부여 및 변경은 최고 관리자(Rank 4)만 가능합니다.");
@@ -748,9 +781,19 @@
                 return matchSearch && matchSubject;
             });
 
-            const filteredUsers = usersList.filter(u => {
-                return u.name.includes(userSearchQuery) || u.email.includes(userSearchQuery) || (u.position && u.position.includes(userSearchQuery)) || u.grade.includes(userSearchQuery);
-            });
+            // 관리자 탭 - 학생 목록 필터링
+            const activeUsersList = usersList.filter(u => u.status !== 'suspended');
+            const suspendedUsersList = usersList.filter(u => u.status === 'suspended');
+
+            const getDisplayUserList = () => {
+                let targetList = adminUserSubTab === "suspended" ? suspendedUsersList : activeUsersList;
+                if (adminUserSubTab === "security") targetList = usersList; // 보안 탭은 전체 열람
+                
+                return targetList.filter(u => {
+                    return u.name.includes(userSearchQuery) || u.email.includes(userSearchQuery) || (u.position && u.position.includes(userSearchQuery)) || u.grade.includes(userSearchQuery);
+                });
+            };
+            const filteredDisplayUsers = getDisplayUserList();
 
             if (isFirebaseLoading && isLocalMode === false) {
                 return (
@@ -813,7 +856,7 @@
                                 <div className="bg-emerald-600 text-white p-2 rounded-lg shadow-sm"><i className="fa-solid fa-graduation-cap text-xl"></i></div>
                                 <div>
                                     <h1 className="text-lg font-extrabold text-slate-900 tracking-tight flex items-center gap-1.5">
-                                        Dogye Archive 3.2
+                                        Dogye Archive 3.3
                                         {isLocalMode ? (
                                             <span onClick={() => {
                                                 triggerAlert("현재 브라우저 보안 정책으로 인해 오프라인 상태입니다.\n\n해결방법 1: 깃허브 페이지로 코드를 배포한 뒤 접속하세요.\n해결방법 2: VS Code의 Live Server(포트 5500 등)로 열어주세요.", "오프라인 모드 원인 분석");
@@ -974,7 +1017,7 @@
                         )}
                     </main>
 
-                    {/* 자료실 상세 모달 (미리보기 포함) */}
+                    {/* 자료실 상세 모달 */}
                     {selectedMaterial && (
                         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
                             <div className="bg-white rounded-3xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-hidden border border-slate-200 flex flex-col">
@@ -1157,10 +1200,10 @@
                         </div>
                     )}
 
-                    {/* 최고 관리자 콘솔 모달 (3.2 통합 허브 버전) */}
+                    {/* 최고 관리자 콘솔 모달 (3.3 계정 복구 & 보안 탭 추가버전) */}
                     {isAdminConsoleOpen && (
                         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-                            <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200">
+                            <div className="bg-white rounded-3xl shadow-2xl max-w-lg w-full overflow-hidden border border-slate-200">
                                 <div className="p-5 border-b border-slate-100 bg-slate-800 text-white">
                                     <div className="flex items-center justify-between mb-3">
                                         <h2 className="text-base font-bold"><i className="fa-solid fa-gear text-slate-300 mr-2"></i>마스터 관리자 시스템</h2>
@@ -1169,7 +1212,7 @@
                                     
                                     <div className="flex bg-slate-700/60 p-0.5 rounded-lg text-xs font-semibold">
                                         <button onClick={() => setAdminTab("config")} className={`flex-1 py-1.5 rounded-md transition-all ${adminTab === 'config' ? 'bg-slate-900 text-white' : 'text-slate-300 hover:text-white'}`}>📢 공지 & 학사일정</button>
-                                        <button onClick={() => setAdminTab("users")} className={`flex-1 py-1.5 rounded-md transition-all ${adminTab === 'users' ? 'bg-slate-900 text-white' : 'text-slate-300 hover:text-white'}`}>👥 학생 정보 관리 ({usersList.length})</button>
+                                        <button onClick={() => setAdminTab("users")} className={`flex-1 py-1.5 rounded-md transition-all ${adminTab === 'users' ? 'bg-slate-900 text-white' : 'text-slate-300 hover:text-white'}`}>👥 학생 정보 관리</button>
                                     </div>
                                 </div>
 
@@ -1204,11 +1247,19 @@
                                     </form>
                                 ) : (
                                     <div className="p-5 space-y-4">
+                                        <div className="flex gap-2 border-b border-slate-200 pb-3 overflow-x-auto">
+                                            <button onClick={() => setAdminUserSubTab("active")} className={`text-xs font-bold px-3 py-1.5 rounded-lg whitespace-nowrap transition-all ${adminUserSubTab === 'active' ? 'bg-emerald-100 text-emerald-800' : 'text-slate-500 hover:bg-slate-100'}`}>정상 계정 ({activeUsersList.length})</button>
+                                            <button onClick={() => setAdminUserSubTab("suspended")} className={`text-xs font-bold px-3 py-1.5 rounded-lg whitespace-nowrap transition-all ${adminUserSubTab === 'suspended' ? 'bg-red-100 text-red-800' : 'text-slate-500 hover:bg-slate-100'}`}>정지 보관함 ({suspendedUsersList.length})</button>
+                                            {currentUserRank === 4 && (
+                                                <button onClick={() => setAdminUserSubTab("security")} className={`text-xs font-bold px-3 py-1.5 rounded-lg whitespace-nowrap transition-all ${adminUserSubTab === 'security' ? 'bg-purple-100 text-purple-800' : 'text-slate-500 hover:bg-slate-100'}`}><i className="fa-solid fa-lock mr-1"></i>보안 관리(마스터)</button>
+                                            )}
+                                        </div>
+
                                         <div className="relative">
                                             <span className="absolute inset-y-0 left-0 flex items-center pl-2 text-slate-400"><i className="fa-solid fa-magnifying-glass text-xs"></i></span>
                                             <input 
                                                 type="text" 
-                                                placeholder="이름, 학년, 이메일로 가입자 조회" 
+                                                placeholder="이름, 직책, 이메일로 검색" 
                                                 value={userSearchQuery}
                                                 onChange={(e) => setUserSearchQuery(e.target.value)}
                                                 className="w-full pl-8 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:ring-1 focus:ring-emerald-500"
@@ -1216,19 +1267,20 @@
                                         </div>
 
                                         <div className="max-h-[50vh] overflow-y-auto border border-slate-100 rounded-xl divide-y divide-slate-100 bg-slate-50">
-                                            {filteredUsers.map(u => (
+                                            {adminUserSubTab !== "security" && filteredDisplayUsers.map(u => (
                                                 <div key={u.id || u.email} className="p-3 flex flex-col sm:flex-row sm:items-center justify-between text-xs hover:bg-slate-100 transition-all gap-2">
                                                     <div className="overflow-hidden pr-2 flex-1">
                                                         <div className="flex items-center gap-1.5 mb-1">
-                                                            <span className="font-bold text-slate-800">{u.name}</span>
+                                                            <span className={`font-bold ${u.status === 'suspended' ? 'text-slate-400 line-through' : 'text-slate-800'}`}>{u.name}</span>
                                                             <span className="bg-slate-200 text-slate-600 text-[9px] px-1.5 py-0.5 rounded-full font-bold">{u.grade}</span>
                                                             {u.rank >= 2 && <span className="bg-emerald-100 text-emerald-800 text-[9px] px-1.5 py-0.5 rounded-full font-bold">{u.position}</span>}
+                                                            {u.status === 'suspended' && <span className="bg-red-100 text-red-700 text-[9px] px-1.5 py-0.5 rounded-full font-bold">정지됨</span>}
                                                         </div>
                                                         <div className="text-slate-400 text-[10px] truncate">{u.email}</div>
                                                     </div>
                                                     
                                                     <div className="flex items-center gap-2 shrink-0">
-                                                        {currentUserRank === 4 && (
+                                                        {adminUserSubTab === "active" && currentUserRank === 4 && (
                                                             <select 
                                                                 value={u.position || '일반 학생'} 
                                                                 onChange={(e) => handleUpdateUserPosition(u.email, e.target.value)}
@@ -1245,18 +1297,49 @@
                                                                 <option value="체육부">체육부 (Rank 2)</option>
                                                             </select>
                                                         )}
-                                                        <button 
-                                                            onClick={() => deleteUser(u.email, u.rank || 1)} 
-                                                            className="text-red-500 hover:bg-red-50 px-2.5 py-1.5 rounded-lg border border-red-200 hover:border-red-500 font-bold text-[10px] transition-all"
-                                                            title="권한 하위 계정을 정지 및 탈퇴 처리합니다."
-                                                        >
-                                                            계정 정지
-                                                        </button>
+                                                        {adminUserSubTab === "active" ? (
+                                                            <button 
+                                                                onClick={() => suspendUser(u.email, u.rank || 1)} 
+                                                                className="text-red-500 hover:bg-red-50 px-2.5 py-1.5 rounded-lg border border-red-200 hover:border-red-500 font-bold text-[10px] transition-all"
+                                                                title="이 계정의 로그인을 차단하고 정지시킵니다."
+                                                            >
+                                                                계정 정지
+                                                            </button>
+                                                        ) : (
+                                                            <button 
+                                                                onClick={() => restoreUser(u.email)} 
+                                                                className="text-blue-500 hover:bg-blue-50 px-2.5 py-1.5 rounded-lg border border-blue-200 hover:border-blue-500 font-bold text-[10px] transition-all"
+                                                                title="이 계정을 다시 활성화합니다."
+                                                            >
+                                                                계정 복구
+                                                            </button>
+                                                        )}
                                                     </div>
                                                 </div>
                                             ))}
-                                            {filteredUsers.length === 0 && (
-                                                <div className="py-12 text-center text-slate-400 text-xs font-semibold">조건에 일치하는 등록 학생이 없습니다.</div>
+
+                                            {/* Rank 4 전용 보안 관리 탭 (비밀번호 열람) */}
+                                            {adminUserSubTab === "security" && filteredDisplayUsers.map(u => (
+                                                <div key={u.id || u.email} className="p-3 text-xs hover:bg-slate-100 transition-all border-b border-slate-100 last:border-0">
+                                                    <div className="flex justify-between items-center mb-1">
+                                                        <div className="font-bold text-slate-800">{u.name} <span className="text-[10px] text-slate-400 font-normal ml-1">({u.grade})</span></div>
+                                                        <div className="text-[10px] font-bold text-purple-600 bg-purple-50 px-2 py-0.5 rounded">{u.position || '일반 학생'}</div>
+                                                    </div>
+                                                    <div className="grid grid-cols-2 gap-2 mt-2 bg-white p-2 rounded-lg border border-slate-200">
+                                                        <div>
+                                                            <p className="text-[9px] text-slate-400 font-bold mb-0.5">이메일 계정</p>
+                                                            <p className="font-mono text-slate-600 truncate">{u.email}</p>
+                                                        </div>
+                                                        <div>
+                                                            <p className="text-[9px] text-slate-400 font-bold mb-0.5">보안 비밀번호</p>
+                                                            <p className="font-mono text-rose-500 font-bold truncate">{u.password}</p>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            ))}
+
+                                            {filteredDisplayUsers.length === 0 && (
+                                                <div className="py-12 text-center text-slate-400 text-xs font-semibold">일치하는 학생 정보가 없습니다.</div>
                                             )}
                                         </div>
                                     </div>
