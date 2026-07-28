@@ -1029,7 +1029,7 @@
                         </div>
                     )}
 
-                    {/* 최고 관리자 콘솔 모달 (학습부 승인 탭 추가됨) */}
+                    {/* 최고 관리자 콘솔 모달 (안전성 강화 및 버그 픽스) */}
                     {isAdminConsoleOpen && (
                         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
                             <div className="bg-white rounded-3xl shadow-2xl max-w-2xl w-full overflow-hidden border border-slate-200">
@@ -1042,17 +1042,28 @@
                                     <div className="flex bg-slate-700/60 p-0.5 rounded-lg text-xs font-semibold overflow-x-auto">
                                         <button onClick={() => setAdminTab("config")} className={`px-3 py-1.5 rounded-md transition-all whitespace-nowrap ${adminTab === 'config' ? 'bg-slate-900 text-white' : 'text-slate-300 hover:text-white'}`}>📢 공지 & 일정</button>
                                         <button onClick={() => setAdminTab("users")} className={`px-3 py-1.5 rounded-md transition-all whitespace-nowrap ${adminTab === 'users' ? 'bg-slate-900 text-white' : 'text-slate-300 hover:text-white'}`}>👥 계정 관리</button>
-                                        {currentUserRank >= 3 && ( // 학습부(Rank 3) 이상만 보이는 탭
-                                            <button onClick={() => setAdminTab("study")} className={`px-3 py-1.5 rounded-md transition-all whitespace-nowrap ${adminTab === 'study' ? 'bg-emerald-600 text-white' : 'text-emerald-300 hover:text-white flex-1'}`}><i className="fa-solid fa-check-double mr-1"></i>학습 인증 승인 ({(studyRecords.filter(r=>r.status==='pending')).length})</button>
+                                        {currentUserRank >= 3 && (
+                                            <button onClick={() => setAdminTab("study")} className={`px-3 py-1.5 rounded-md transition-all whitespace-nowrap ${adminTab === 'study' ? 'bg-emerald-600 text-white' : 'text-emerald-300 hover:text-white flex-1'}`}><i className="fa-solid fa-check-double mr-1"></i>학습 인증 승인 ({(studyRecords || []).filter(r=>r.status==='pending').length})</button>
                                         )}
                                     </div>
                                 </div>
 
                                 {adminTab === "config" && (
                                     <form onSubmit={handleAdminSettingsSave} className="p-6 space-y-4 max-h-[70vh] overflow-y-auto">
-                                        <div><label className="block text-xs font-bold text-slate-500 mb-1.5">상단 공지 수정</label><textarea value={editNotice} onChange={(e) => setEditNotice(e.target.value)} rows="2" className="w-full px-3 py-2 border rounded-xl text-xs focus:ring-1 focus:ring-emerald-500 resize-none" required></textarea></div>
-                                        <div className="border-t border-slate-100 pt-3"><label className="block text-xs font-bold text-slate-500 mb-1.5">수능 날짜</label><input type="date" value={editDday.csat} onChange={(e)=>setEditDday({...editDday, csat: e.target.value})} className="w-full px-3 py-2 border rounded-xl text-xs" required /></div>
-                                        <div className="border-t border-slate-100 pt-3"><label className="block text-xs font-bold text-slate-500 mb-1.5">내신 시험 이름</label><input type="text" value={editDday.examName} onChange={(e)=>setEditDday({...editDday, examName: e.target.value})} className="w-full px-3 py-2 border rounded-xl text-xs mb-3" required /><label className="block text-xs font-bold text-slate-500 mb-1.5">시험 날짜</label><input type="date" value={editDday.examDate} onChange={(e)=>setEditDday({...editDday, examDate: e.target.value})} className="w-full px-3 py-2 border rounded-xl text-xs" required /></div>
+                                        <div>
+                                            <label className="block text-xs font-bold text-slate-500 mb-1.5">상단 공지 수정</label>
+                                            <textarea value={editNotice || ''} onChange={(e) => setEditNotice(e.target.value)} rows="2" className="w-full px-3 py-2 border rounded-xl text-xs focus:ring-1 focus:ring-emerald-500 resize-none" required></textarea>
+                                        </div>
+                                        <div className="border-t border-slate-100 pt-3">
+                                            <label className="block text-xs font-bold text-slate-500 mb-1.5">수능 날짜</label>
+                                            <input type="date" value={editDday?.csat || ''} onChange={(e)=>setEditDday({...editDday, csat: e.target.value})} className="w-full px-3 py-2 border rounded-xl text-xs" required />
+                                        </div>
+                                        <div className="border-t border-slate-100 pt-3">
+                                            <label className="block text-xs font-bold text-slate-500 mb-1.5">내신 시험 이름</label>
+                                            <input type="text" value={editDday?.examName || ''} onChange={(e)=>setEditDday({...editDday, examName: e.target.value})} className="w-full px-3 py-2 border rounded-xl text-xs mb-3" required />
+                                            <label className="block text-xs font-bold text-slate-500 mb-1.5">시험 날짜</label>
+                                            <input type="date" value={editDday?.examDate || ''} onChange={(e)=>setEditDday({...editDday, examDate: e.target.value})} className="w-full px-3 py-2 border rounded-xl text-xs" required />
+                                        </div>
                                         <button type="submit" className="w-full bg-slate-800 text-white font-bold py-3 rounded-xl shadow text-sm">설정 즉시 저장</button>
                                     </form>
                                 )}
@@ -1064,28 +1075,68 @@
                                             <button onClick={() => setAdminUserSubTab("suspended")} className={`text-xs font-bold px-3 py-1.5 rounded-lg whitespace-nowrap ${adminUserSubTab === 'suspended' ? 'bg-red-100 text-red-800' : 'text-slate-500 hover:bg-slate-100'}`}>정지 보관함</button>
                                             {currentUserRank === 4 && <button onClick={() => setAdminUserSubTab("security")} className={`text-xs font-bold px-3 py-1.5 rounded-lg whitespace-nowrap ${adminUserSubTab === 'security' ? 'bg-purple-100 text-purple-800' : 'text-slate-500 hover:bg-slate-100'}`}><i className="fa-solid fa-lock mr-1"></i>보안 열람</button>}
                                         </div>
+                                        
+                                        <div className="relative">
+                                            <span className="absolute inset-y-0 left-0 flex items-center pl-2 text-slate-400"><i className="fa-solid fa-magnifying-glass text-xs"></i></span>
+                                            <input type="text" placeholder="이름, 이메일로 검색" value={userSearchQuery} onChange={(e) => setUserSearchQuery(e.target.value)} className="w-full pl-8 pr-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs focus:ring-1 focus:ring-emerald-500" />
+                                        </div>
+
                                         <div className="max-h-[50vh] overflow-y-auto border border-slate-100 rounded-xl divide-y divide-slate-100 bg-slate-50">
-                                            {adminUserSubTab !== "security" ? usersList.filter(u => adminUserSubTab === "active" ? u.status !== 'suspended' : u.status === 'suspended').map(u => (
-                                                <div key={u.id} className="p-3 flex justify-between text-xs hover:bg-slate-100 gap-2">
-                                                    <div><span className="font-bold">{u.name}</span> <span className="bg-slate-200 text-[9px] px-1.5 py-0.5 rounded-full">{u.grade}</span><div className="text-[10px] text-slate-400">{u.email}</div></div>
-                                                    <div className="flex gap-2 items-center">
-                                                        {adminUserSubTab === "active" && currentUserRank === 4 && <select value={u.position} onChange={(e) => handleUpdateUserPosition(u.email, e.target.value)} className="text-[10px] border rounded p-1"><option value="일반 학생">일반 학생</option><option value="학습부">학습부 (Rank 3)</option><option value="회장">회장 (Rank 2)</option></select>}
-                                                        {adminUserSubTab === "active" ? <button onClick={() => suspendUser(u.email, u.rank)} className="text-red-500 border border-red-200 px-2 py-1 rounded">정지</button> : <button onClick={() => restoreUser(u.email)} className="text-blue-500 border border-blue-200 px-2 py-1 rounded">복구</button>}
+                                            {adminUserSubTab !== "security" ? (usersList || [])
+                                                .filter(u => adminUserSubTab === "active" ? u.status !== 'suspended' : u.status === 'suspended')
+                                                .filter(u => u.name.includes(userSearchQuery) || u.email.includes(userSearchQuery))
+                                                .map(u => (
+                                                <div key={u.id || u.email} className="p-3 flex flex-col sm:flex-row sm:items-center justify-between text-xs hover:bg-slate-100 gap-2 border-b border-slate-100">
+                                                    <div className="overflow-hidden pr-2 flex-1">
+                                                        <div className="flex items-center gap-1.5 mb-1">
+                                                            <span className="font-bold text-slate-800">{u.name}</span>
+                                                            <span className="bg-slate-200 text-slate-600 text-[9px] px-1.5 py-0.5 rounded-full font-bold">{u.grade}</span>
+                                                            {u.rank >= 2 && <span className="bg-emerald-100 text-emerald-800 text-[9px] px-1.5 py-0.5 rounded-full font-bold">{u.position}</span>}
+                                                        </div>
+                                                        <div className="text-[10px] text-slate-400 truncate">{u.email}</div>
+                                                    </div>
+                                                    <div className="flex gap-2 items-center shrink-0">
+                                                        {adminUserSubTab === "active" && currentUserRank === 4 && (
+                                                            <select value={u.position || '일반 학생'} onChange={(e) => handleUpdateUserPosition(u.email, e.target.value)} className="text-[10px] font-bold border border-slate-300 rounded p-1.5 bg-white">
+                                                                <option value="일반 학생">일반 학생 (Rank 1)</option>
+                                                                <option value="학습부">학습부 (Rank 3)</option>
+                                                                <option value="회장">회장 (Rank 2)</option>
+                                                                <option value="부회장">부회장 (Rank 2)</option>
+                                                                <option value="총무부">총무부 (Rank 2)</option>
+                                                                <option value="행정부">행정부 (Rank 2)</option>
+                                                                <option value="방송부">방송부 (Rank 2)</option>
+                                                                <option value="홍보부">홍보부 (Rank 2)</option>
+                                                                <option value="체육부">체육부 (Rank 2)</option>
+                                                            </select>
+                                                        )}
+                                                        {adminUserSubTab === "active" ? (
+                                                            <button onClick={() => suspendUser(u.email, u.rank)} className="text-red-500 hover:bg-red-50 border border-red-200 px-2 py-1.5 rounded font-bold">계정 정지</button>
+                                                        ) : (
+                                                            <button onClick={() => restoreUser(u.email)} className="text-blue-500 hover:bg-blue-50 border border-blue-200 px-2 py-1.5 rounded font-bold">계정 복구</button>
+                                                        )}
                                                     </div>
                                                 </div>
-                                            )) : usersList.map(u => (
-                                                <div key={u.id} className="p-3 text-xs hover:bg-slate-100"><div className="font-bold">{u.name} ({u.position})</div><div className="grid grid-cols-2 gap-2 mt-2 bg-white p-2 rounded"><p className="font-mono">{u.email}</p><p className="font-mono text-rose-500 font-bold">{u.password}</p></div></div>
+                                            )) : (usersList || [])
+                                                .filter(u => u.name.includes(userSearchQuery) || u.email.includes(userSearchQuery))
+                                                .map(u => (
+                                                <div key={u.id || u.email} className="p-3 text-xs hover:bg-slate-100 border-b border-slate-100">
+                                                    <div className="font-bold text-slate-800">{u.name} <span className="text-[10px] text-purple-600 bg-purple-50 px-2 py-0.5 rounded ml-1 font-bold">{u.position}</span></div>
+                                                    <div className="grid grid-cols-2 gap-2 mt-2 bg-white p-2 rounded border border-slate-200">
+                                                        <div><p className="text-[9px] text-slate-400 font-bold mb-0.5">이메일</p><p className="font-mono text-slate-600 truncate">{u.email}</p></div>
+                                                        <div><p className="text-[9px] text-slate-400 font-bold mb-0.5">비밀번호</p><p className="font-mono text-rose-500 font-bold truncate">{u.password}</p></div>
+                                                    </div>
+                                                </div>
                                             ))}
+                                            {usersList.length === 0 && <div className="py-8 text-center text-slate-400 text-xs">데이터가 없습니다.</div>}
                                         </div>
                                     </div>
                                 )}
 
-                                {/* 🔥 학습부(Rank 3) 인증 승인 탭 */}
                                 {adminTab === "study" && (
                                     <div className="p-5">
                                         <h3 className="font-bold text-slate-800 text-sm mb-3">접수된 학습 증빙 기록</h3>
                                         <div className="max-h-[60vh] overflow-y-auto space-y-4">
-                                            {studyRecords.filter(r => r.status === 'pending').map(record => (
+                                            {(studyRecords || []).filter(r => r.status === 'pending').map(record => (
                                                 <div key={record.id} className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
                                                     <div className="flex justify-between items-center mb-3 border-b border-slate-100 pb-2">
                                                         <div><span className="font-bold text-slate-800 mr-2">{record.userName}</span><span className="text-[10px] bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">{record.grade}</span></div>
@@ -1102,7 +1153,7 @@
                                                     </div>
                                                 </div>
                                             ))}
-                                            {studyRecords.filter(r => r.status === 'pending').length === 0 && (
+                                            {(studyRecords || []).filter(r => r.status === 'pending').length === 0 && (
                                                 <div className="py-12 text-center bg-slate-50 rounded-xl border border-slate-100">
                                                     <i className="fa-solid fa-face-smile text-3xl text-emerald-300 mb-2"></i>
                                                     <p className="text-xs font-bold text-slate-500">결재 대기 중인 사진이 없습니다.<br/>모든 업무를 처리하셨습니다!</p>
