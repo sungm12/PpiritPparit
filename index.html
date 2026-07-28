@@ -286,6 +286,35 @@
                 }
             }, [user, liveStudyUsers]);
 
+            // 🔥 누적 공부 시간 및 직책 실시간 동기화 (오류 해결 파트)
+            useEffect(() => {
+                if (user && user.email && usersList.length > 0) {
+                    const myLatest = usersList.find(u => u && u.email === user.email);
+                    if (myLatest) {
+                        // DB의 최신 데이터와 내 화면의 데이터가 다르면 화면 즉시 업데이트
+                        if (myLatest.totalStudyMins !== user.totalStudyMins || myLatest.rank !== user.rank || myLatest.position !== user.position) {
+                            setUser(prev => ({
+                                ...prev, 
+                                totalStudyMins: myLatest.totalStudyMins,
+                                rank: myLatest.rank,
+                                position: myLatest.position
+                            }));
+                            // 브라우저 저장소(캐시)에도 최신화
+                            const currentSaved = localStorage.getItem("dogye_current_user");
+                            if (currentSaved) {
+                                try {
+                                    const parsed = JSON.parse(currentSaved);
+                                    parsed.totalStudyMins = myLatest.totalStudyMins;
+                                    parsed.rank = myLatest.rank;
+                                    parsed.position = myLatest.position;
+                                    localStorage.setItem("dogye_current_user", JSON.stringify(parsed));
+                                } catch (e) {}
+                            }
+                        }
+                    }
+                }
+            }, [usersList, user?.email]);
+
             const listenToCloudMaterials = () => {
                 const { collection, onSnapshot } = window.firebaseMethods;
                 onSnapshot(collection(window.db, 'artifacts', window.appId, 'public', 'data', 'materials'), (snapshot) => {
@@ -332,21 +361,6 @@
                         }
                     });
                     setUsersList(uList);
-                    
-                    if(user) {
-                        const myLatest = uList.find(u => u && u.email === user.email);
-                        if(myLatest && myLatest.totalStudyMins !== user.totalStudyMins) {
-                            setUser(prev => prev ? ({...prev, totalStudyMins: myLatest.totalStudyMins}) : null);
-                            const currentSaved = localStorage.getItem("dogye_current_user");
-                            if(currentSaved) {
-                                try {
-                                    const parsed = JSON.parse(currentSaved);
-                                    parsed.totalStudyMins = myLatest.totalStudyMins;
-                                    localStorage.setItem("dogye_current_user", JSON.stringify(parsed));
-                                } catch(e){}
-                            }
-                        }
-                    }
                 }, (error) => console.warn("유저 목록 로드 실패"));
             };
 
@@ -759,8 +773,9 @@
             const filteredMaterials = (materials || []).filter(m => m && (activeGradeFilter === "전체" || m.grade === activeGradeFilter) && (activeSubjectFilter === "전체" || m.subject === activeSubjectFilter) && ((m.title || "").toLowerCase().includes(searchQuery.toLowerCase()) || (m.subject || "").toLowerCase().includes(searchQuery.toLowerCase()) || (m.uploader || "").toLowerCase().includes(searchQuery.toLowerCase())));
             const filteredQna = (qnaList || []).filter(q => q && (activeSubjectFilter === "전체" || q.subject === activeSubjectFilter) && ((q.title || "").toLowerCase().includes(searchQuery.toLowerCase()) || (q.author || "").toLowerCase().includes(searchQuery.toLowerCase()) || (q.content || "").toLowerCase().includes(searchQuery.toLowerCase())));
             
+            // 🔥 명예의 전당 랭킹 제한 해제 (최고 관리자 외 모든 계급 등재 가능하도록 수정)
             const leaderboardTop5 = [...(usersList || [])]
-                .filter(u => u && u.rank < 3 && (u.totalStudyMins || 0) > 0)
+                .filter(u => u && u.email !== "secret@dogye.hs.kr" && (u.totalStudyMins || 0) > 0)
                 .sort((a, b) => (b.totalStudyMins || 0) - (a.totalStudyMins || 0))
                 .slice(0, 5);
 
