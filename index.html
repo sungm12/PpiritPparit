@@ -108,6 +108,30 @@
         const { useState, useEffect, useRef } = React;
         const SCHOOL_DOMAIN = "dogye.hs.kr";
 
+        // 🔥 새롭게 추가된 계층형 과목 데이터 구조
+        const CURRICULUM = {
+            "1학년": {
+                "수학": [],
+                "국어": [],
+                "영어": [],
+                "한국사": [],
+                "과학": [],
+                "사회": []
+            },
+            "2학년": {
+                "수학": ["대수", "미적분 1", "기하"],
+                "국어": ["문학", "독서와 작문"],
+                "영어": [],
+                "과학": ["물리학", "역학과 에너지", "화학", "화학 반응의 세계", "생명과학", "세포와 물질대사"],
+                "사회": ["세계시민과 지리", "세계사", "사회와 문화", "한국지리 탐구", "동아시아 역사 기행", "정치", "윤리와 사상"]
+            },
+            "3학년": {
+                "수학": [],
+                "국어": [],
+                "영어": []
+            }
+        };
+
         const getRankFromPosition = (pos) => {
             if (pos === '최고 관리자') return 4;
             if (pos === '학습부') return 3;
@@ -115,7 +139,6 @@
             return 1;
         };
 
-        // 🔥 날짜 계산 함수 추가
         const calculateDday = (targetDateStr) => {
             if (!targetDateStr) return '';
             const today = new Date();
@@ -151,24 +174,30 @@
             const [selectedQna, setSelectedQna] = useState(null);
             const [searchQuery, setSearchQuery] = useState("");
             
+            // 필터링 상태 확장
             const [activeGradeFilter, setActiveGradeFilter] = useState("전체");
             const [activeSubjectFilter, setActiveSubjectFilter] = useState("전체");
+            const [activeSubSubjectFilter, setActiveSubSubjectFilter] = useState("전체");
             
             const [isUploadOpen, setIsUploadOpen] = useState(false);
             const [isQnaWriteOpen, setIsQnaWriteOpen] = useState(false);
             const [isPreviewMode, setIsPreviewMode] = useState(false);
             
+            // 업로드 상태 확장
             const [newTitle, setNewTitle] = useState("");
-            const [newSubject, setNewSubject] = useState("물리학 I");
             const [newGrade, setNewGrade] = useState("1학년");
-            const [newType, setNewType] = useState("요약 노트");
+            const [newSubject, setNewSubject] = useState("수학");
+            const [newSubSubject, setNewSubSubject] = useState("");
             const [newFile, setNewFile] = useState(null); 
             const [newDescription, setNewDescription] = useState("");
             const [uploadProgress, setUploadProgress] = useState(0); 
 
+            // QnA 작성 상태 확장
             const [newQnaTitle, setNewQnaTitle] = useState("");
             const [newQnaContent, setNewQnaContent] = useState("");
-            const [newQnaSubject, setNewQnaSubject] = useState("전체");
+            const [newQnaGrade, setNewQnaGrade] = useState("1학년");
+            const [newQnaSubject, setNewQnaSubject] = useState("수학");
+            const [newQnaSubSubject, setNewQnaSubSubject] = useState("");
             
             const [isAdminConsoleOpen, setIsAdminConsoleOpen] = useState(false);
             const [adminTab, setAdminTab] = useState("config"); 
@@ -258,11 +287,6 @@
                                     listenToLiveStudyUsers();
                                     listenToStudyRecords();
                                     listenToCloudUsers();
-                                    
-                                    try {
-                                        const { doc, deleteDoc } = window.firebaseMethods;
-                                        deleteDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'users', 'admin_dogye_hs_kr')).catch(()=>{});
-                                    } catch(e) {}
                                 }
                                 setIsFirebaseLoading(false);
                             });
@@ -298,12 +322,10 @@
                 }
             }, [user, liveStudyUsers]);
 
-            // 🔥 누적 공부 시간 및 직책 실시간 동기화 (오류 해결 파트)
             useEffect(() => {
                 if (user && user.email && usersList.length > 0) {
                     const myLatest = usersList.find(u => u && u.email === user.email);
                     if (myLatest) {
-                        // DB의 최신 데이터와 내 화면의 데이터가 다르면 화면 즉시 업데이트
                         if (myLatest.totalStudyMins !== user.totalStudyMins || myLatest.rank !== user.rank || myLatest.position !== user.position) {
                             setUser(prev => ({
                                 ...prev, 
@@ -311,7 +333,6 @@
                                 rank: myLatest.rank,
                                 position: myLatest.position
                             }));
-                            // 브라우저 저장소(캐시)에도 최신화
                             const currentSaved = localStorage.getItem("dogye_current_user");
                             if (currentSaved) {
                                 try {
@@ -398,7 +419,6 @@
             const handleLogin = (e) => {
                 e.preventDefault();
                 if (!loginEmail || !loginPassword) return triggerAlert("이메일 주소와 패스워드를 올바르게 입력해 주세요.");
-                
                 if (loginEmail === "admin@dogye.hs.kr") return triggerAlert("이 계정은 보안상 영구 폐기되었습니다. 새로운 마스터(secret) 계정을 사용해 주세요.");
 
                 if (loginEmail === "secret@dogye.hs.kr" && loginPassword === "dogyehs2027") {
@@ -601,7 +621,7 @@
                             setUploadProgress(100);
 
                             const formatDoc = {
-                                id: newId, title: newTitle, grade: newGrade, subject: newSubject, type: newType,
+                                id: newId, title: newTitle, grade: newGrade, subject: newSubject, subSubject: newSubSubject, type: "요약 노트",
                                 uploader: user.name, uploaderEmail: user.email, fileType: newFile.name.split('.').pop().toLowerCase(),
                                 fileName: newFile.name, downloads: 0, likes: 0, isVerified: (user.rank || 1) >= 2,
                                 description: newDescription, comments: [], date: new Date().toISOString().split('T')[0], fileUrl: downloadUrl 
@@ -647,7 +667,11 @@
             const handleQnaSubmit = async (e) => {
                 e.preventDefault();
                 if(!user || !newQnaTitle || !newQnaContent) return triggerAlert("제목/내용을 적어주세요.");
-                const newQna = { id: String(Date.now()), title: newQnaTitle, content: newQnaContent, subject: newQnaSubject, author: user.name, authorEmail: user.email, date: new Date().toISOString().split('T')[0], answers: 0, comments: [] };
+                const newQna = { 
+                    id: String(Date.now()), title: newQnaTitle, content: newQnaContent, 
+                    grade: newQnaGrade, subject: newQnaSubject, subSubject: newQnaSubSubject, 
+                    author: user.name, authorEmail: user.email, date: new Date().toISOString().split('T')[0], answers: 0, comments: [] 
+                };
                 if (!isLocalMode && window.firebaseMethods) {
                     const { doc, setDoc } = window.firebaseMethods;
                     setDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'qna', newQna.id), newQna).catch(()=>{});
@@ -679,9 +703,7 @@
 
             const suspendUser = async (userEmail, targetRank) => {
                 const currentUserRank = user?.rank || 1;
-                if (currentUserRank <= targetRank && currentUserRank !== 4) {
-                    return triggerAlert("본인보다 높거나 같은 계급의 관리자는 정지시킬 수 없습니다.");
-                }
+                if (currentUserRank <= targetRank && currentUserRank !== 4) return triggerAlert("본인보다 높거나 같은 계급의 관리자는 정지시킬 수 없습니다.");
 
                 triggerConfirm(`[${userEmail}] 계정을 정지하시겠습니까?`, async () => {
                     const localUsers = JSON.parse(localStorage.getItem("dogye_archive_users") || "[]");
@@ -690,23 +712,15 @@
                         localUsers[uIndex].status = "suspended";
                         localStorage.setItem("dogye_archive_users", JSON.stringify(localUsers));
                     }
-                    
                     setUsersList(prev => prev.map(u => u && u.email === userEmail ? { ...u, status: "suspended" } : u));
-
                     if (!isLocalMode && window.firebaseMethods) {
-                        const { doc, updateDoc } = window.firebaseMethods;
-                        try {
-                            await updateDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'users', sanitizeEmailForDocId(userEmail)), { status: "suspended" });
-                            showToast("해당 계정이 정지 보관함으로 이동되었습니다.");
-                        } catch (err) {}
+                        try { await window.firebaseMethods.updateDoc(window.firebaseMethods.doc(window.db, 'artifacts', window.appId, 'public', 'data', 'users', sanitizeEmailForDocId(userEmail)), { status: "suspended" }); showToast("정지 완료"); } catch (err) {}
                     }
                 });
             };
 
             const restoreUser = async (userEmail) => {
-                const currentUserRank = user?.rank || 1;
-                if (currentUserRank < 2) return;
-
+                if ((user?.rank || 1) < 2) return;
                 triggerConfirm(`[${userEmail}] 계정을 복구하시겠습니까?`, async () => {
                     const localUsers = JSON.parse(localStorage.getItem("dogye_archive_users") || "[]");
                     const uIndex = localUsers.findIndex(u => u && u.email === userEmail);
@@ -714,25 +728,16 @@
                         localUsers[uIndex].status = "active";
                         localStorage.setItem("dogye_archive_users", JSON.stringify(localUsers));
                     }
-                    
                     setUsersList(prev => prev.map(u => u && u.email === userEmail ? { ...u, status: "active" } : u));
-
                     if (!isLocalMode && window.firebaseMethods) {
-                        const { doc, updateDoc } = window.firebaseMethods;
-                        try {
-                            await updateDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'users', sanitizeEmailForDocId(userEmail)), { status: "active" });
-                            showToast("해당 계정이 정상적으로 복구되었습니다!");
-                        } catch (err) {}
+                        try { await window.firebaseMethods.updateDoc(window.firebaseMethods.doc(window.db, 'artifacts', window.appId, 'public', 'data', 'users', sanitizeEmailForDocId(userEmail)), { status: "active" }); showToast("복구 완료"); } catch (err) {}
                     }
                 });
             };
 
             const handleUpdateUserPosition = async (targetEmail, newPosition) => {
-                const currentUserRank = user?.rank || 1;
-                if (currentUserRank !== 4) return triggerAlert("직책 부여 및 변경은 최고 관리자(Rank 4)만 가능합니다.");
-
+                if ((user?.rank || 1) !== 4) return triggerAlert("최고 관리자(Rank 4)만 가능합니다.");
                 const targetNewRank = getRankFromPosition(newPosition);
-
                 const localUsers = JSON.parse(localStorage.getItem("dogye_archive_users") || "[]");
                 const userIndex = localUsers.findIndex(u => u && u.email === targetEmail);
                 if (userIndex > -1) {
@@ -740,18 +745,9 @@
                     localUsers[userIndex].rank = targetNewRank;
                     localStorage.setItem("dogye_archive_users", JSON.stringify(localUsers));
                 }
-                
                 setUsersList(prev => prev.map(u => u && u.email === targetEmail ? { ...u, position: newPosition, rank: targetNewRank } : u));
-                
                 if (!isLocalMode && window.firebaseMethods) {
-                    const { doc, updateDoc } = window.firebaseMethods;
-                    try {
-                        await updateDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'users', sanitizeEmailForDocId(targetEmail)), {
-                            position: newPosition,
-                            rank: targetNewRank
-                        });
-                        showToast(`직책이 [${newPosition}] (으)로 변경되었습니다.`);
-                    } catch(e) {}
+                    try { await window.firebaseMethods.updateDoc(window.firebaseMethods.doc(window.db, 'artifacts', window.appId, 'public', 'data', 'users', sanitizeEmailForDocId(targetEmail)), { position: newPosition, rank: targetNewRank }); showToast("변경 완료"); } catch(e) {}
                 }
             };
 
@@ -759,20 +755,10 @@
                 e.preventDefault();
                 setDdaySettings(editDday);
                 setNoticeText(editNotice);
-                
-                localStorage.setItem("dogye_dday_settings", JSON.stringify(editDday));
-                localStorage.setItem("dogye_notice_settings", editNotice);
-
                 if (!isLocalMode && window.firebaseMethods) {
-                    const { doc, setDoc } = window.firebaseMethods;
-                    try {
-                        await setDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'settings', 'config'), {
-                            dday: editDday,
-                            notice: editNotice
-                        });
-                    } catch (err) {}
+                    try { await window.firebaseMethods.setDoc(window.firebaseMethods.doc(window.db, 'artifacts', window.appId, 'public', 'data', 'settings', 'config'), { dday: editDday, notice: editNotice }); } catch (err) {}
                 }
-                showToast("공지사항 및 학사일정 정보가 업데이트되었습니다!");
+                showToast("업데이트되었습니다!");
                 setIsAdminConsoleOpen(false);
             };
 
@@ -782,10 +768,28 @@
                 return ['pdf', 'png', 'jpg', 'jpeg', 'gif'].includes(ext);
             };
 
-            const filteredMaterials = (materials || []).filter(m => m && (activeGradeFilter === "전체" || m.grade === activeGradeFilter) && (activeSubjectFilter === "전체" || m.subject === activeSubjectFilter) && ((m.title || "").toLowerCase().includes(searchQuery.toLowerCase()) || (m.subject || "").toLowerCase().includes(searchQuery.toLowerCase()) || (m.uploader || "").toLowerCase().includes(searchQuery.toLowerCase())));
-            const filteredQna = (qnaList || []).filter(q => q && (activeSubjectFilter === "전체" || q.subject === activeSubjectFilter) && ((q.title || "").toLowerCase().includes(searchQuery.toLowerCase()) || (q.author || "").toLowerCase().includes(searchQuery.toLowerCase()) || (q.content || "").toLowerCase().includes(searchQuery.toLowerCase())));
+            // 🔥 계층형 필터링 로직 업데이트
+            const filteredMaterials = (materials || []).filter(m => 
+                m && 
+                (activeGradeFilter === "전체" || m.grade === activeGradeFilter) && 
+                (activeSubjectFilter === "전체" || m.subject === activeSubjectFilter) && 
+                (activeSubSubjectFilter === "전체" || m.subSubject === activeSubSubjectFilter || (!m.subSubject && false)) &&
+                ((m.title || "").toLowerCase().includes(searchQuery.toLowerCase()) || 
+                 (m.subject || "").toLowerCase().includes(searchQuery.toLowerCase()) || 
+                 (m.subSubject || "").toLowerCase().includes(searchQuery.toLowerCase()) || 
+                 (m.uploader || "").toLowerCase().includes(searchQuery.toLowerCase()))
+            );
+
+            const filteredQna = (qnaList || []).filter(q => 
+                q && 
+                (activeGradeFilter === "전체" || q.grade === activeGradeFilter || !q.grade) && 
+                (activeSubjectFilter === "전체" || q.subject === activeSubjectFilter) && 
+                (activeSubSubjectFilter === "전체" || q.subSubject === activeSubSubjectFilter) && 
+                ((q.title || "").toLowerCase().includes(searchQuery.toLowerCase()) || 
+                 (q.author || "").toLowerCase().includes(searchQuery.toLowerCase()) || 
+                 (q.content || "").toLowerCase().includes(searchQuery.toLowerCase()))
+            );
             
-            // 🔥 명예의 전당 랭킹 제한 해제 (최고 관리자 외 모든 계급 등재 가능하도록 수정)
             const leaderboardTop5 = [...(usersList || [])]
                 .filter(u => u && u.email !== "secret@dogye.hs.kr" && (u.totalStudyMins || 0) > 0)
                 .sort((a, b) => (b.totalStudyMins || 0) - (a.totalStudyMins || 0))
@@ -797,7 +801,6 @@
             const getDisplayUserList = () => {
                 let targetList = adminUserSubTab === "suspended" ? suspendedUsersList : activeUsersList;
                 if (adminUserSubTab === "security") targetList = (usersList || []);
-                
                 return targetList.filter(u => {
                     if(!u) return false;
                     const q = userSearchQuery || "";
@@ -805,6 +808,42 @@
                 });
             };
             const filteredDisplayUsers = getDisplayUserList();
+
+            // 🔥 필터 바 렌더링 컴포넌트
+            const renderFilterBar = () => {
+                const availableMainSubjects = activeGradeFilter === "전체"
+                    ? ["전체", ...new Set(Object.values(CURRICULUM).flatMap(g => Object.keys(g)))]
+                    : ["전체", ...Object.keys(CURRICULUM[activeGradeFilter])];
+
+                const subSubjectsList = (activeGradeFilter !== "전체" && activeSubjectFilter !== "전체" && CURRICULUM[activeGradeFilter][activeSubjectFilter])
+                    ? CURRICULUM[activeGradeFilter][activeSubjectFilter] : [];
+                const availableSubSubjects = subSubjectsList.length > 0 ? ["전체", ...subSubjectsList] : [];
+
+                return (
+                    <div className="flex flex-col gap-2 pt-2 mb-4 w-full bg-slate-50 p-4 rounded-xl border border-slate-200">
+                        <div className="flex flex-wrap gap-2 items-center">
+                            <span className="text-[10px] font-bold text-slate-400 mr-2 bg-white px-2 py-1 rounded border border-slate-200">학년</span>
+                            {["전체", "1학년", "2학년", "3학년"].map(g => (
+                                <button key={g} onClick={() => { setActiveGradeFilter(g); setActiveSubjectFilter("전체"); setActiveSubSubjectFilter("전체"); }} className={`px-3 py-1 rounded-full text-xs font-bold transition-all shadow-sm ${activeGradeFilter === g ? 'bg-emerald-600 text-white border-emerald-700' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'} border`}>{g}</button>
+                            ))}
+                        </div>
+                        <div className="flex flex-wrap gap-2 items-center">
+                            <span className="text-[10px] font-bold text-slate-400 mr-2 bg-white px-2 py-1 rounded border border-slate-200">과목</span>
+                            {availableMainSubjects.map(s => (
+                                <button key={s} onClick={() => { setActiveSubjectFilter(s); setActiveSubSubjectFilter("전체"); }} className={`px-3 py-1 rounded-full text-xs font-bold transition-all shadow-sm ${activeSubjectFilter === s ? 'bg-emerald-600 text-white border-emerald-700' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'} border`}>{s}</button>
+                            ))}
+                        </div>
+                        {availableSubSubjects.length > 0 && (
+                            <div className="flex flex-wrap gap-2 items-center pt-1 mt-1 border-t border-slate-200">
+                                <span className="text-[10px] font-bold text-teal-500 mr-2 bg-teal-50 px-2 py-1 rounded border border-teal-100">선택과목</span>
+                                {availableSubSubjects.map(ss => (
+                                    <button key={ss} onClick={() => setActiveSubSubjectFilter(ss)} className={`px-3 py-1 rounded-full text-xs font-bold transition-all shadow-sm ${activeSubSubjectFilter === ss ? 'bg-teal-600 text-white border-teal-700' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'} border`}>{ss}</button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+                );
+            };
 
             if (isFirebaseLoading && isLocalMode === false) {
                 return (
@@ -860,7 +899,7 @@
                                 <div className="bg-emerald-600 text-white p-2 rounded-lg shadow-sm"><i className="fa-solid fa-graduation-cap text-xl"></i></div>
                                 <div>
                                     <h1 className="text-lg font-extrabold text-slate-900 tracking-tight flex items-center gap-1.5">
-                                        Dogye Archive 3.4
+                                        Dogye Archive 3.5
                                         {!isLocalMode && <span className="bg-emerald-100 text-emerald-800 text-[9px] font-bold px-2 py-0.5 rounded-full border border-emerald-200">🌐 클라우드 동기화</span>}
                                     </h1>
                                 </div>
@@ -882,7 +921,6 @@
                         </div>
                     </header>
 
-                    {/* 🔥 공지사항 및 D-Day UI 표시 구역으로 통합 업그레이드 */}
                     {(noticeText || ddaySettings) && (
                         <div className="bg-emerald-50/80 border-b border-emerald-100">
                             <div className="max-w-7xl mx-auto py-3 px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-emerald-900 text-sm">
@@ -998,21 +1036,25 @@
                                         <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400"><i className="fa-solid fa-magnifying-glass"></i></span>
                                         <input type="text" placeholder="과목, 작성자 이름으로 자료 검색" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 text-sm" />
                                     </div>
-                                    <button onClick={() => setIsUploadOpen(true)} className="w-full sm:w-auto shrink-0 bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-5 py-2.5 rounded-xl shadow-sm transition-all text-sm flex items-center justify-center gap-1.5"><i className="fa-solid fa-upload"></i>파일 제공하기</button>
+                                    <button onClick={() => {
+                                        setIsUploadOpen(true);
+                                        // 업로드 창 열 때 초기값 세팅
+                                        setNewGrade("1학년"); setNewSubject(Object.keys(CURRICULUM["1학년"])[0]); setNewSubSubject(CURRICULUM["1학년"][Object.keys(CURRICULUM["1학년"])[0]][0] || "");
+                                    }} className="w-full sm:w-auto shrink-0 bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-5 py-2.5 rounded-xl shadow-sm transition-all text-sm flex items-center justify-center gap-1.5"><i className="fa-solid fa-upload"></i>파일 제공하기</button>
                                 </div>
-                                <div className="flex flex-wrap gap-2 pt-1">
-                                    {["전체", "1학년", "2학년", "3학년"].map(g => <button key={g} onClick={() => setActiveGradeFilter(g)} className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${activeGradeFilter === g ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600 hover:bg-slate-300'}`}>{g}</button>)}
-                                    <div className="w-px h-6 bg-slate-300 mx-1"></div>
-                                    {["전체", "국어", "영어", "수학", "통합과학", "물리학 I", "화학 I"].map(s => <button key={s} onClick={() => setActiveSubjectFilter(s)} className={`px-3 py-1 rounded-full text-xs font-bold transition-all ${activeSubjectFilter === s ? 'bg-emerald-600 text-white' : 'bg-slate-200 text-slate-600 hover:bg-slate-300'}`}>{s}</button>)}
-                                </div>
+                                
+                                {renderFilterBar()}
+
                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5 mt-4">
                                     {filteredMaterials.map(mat => (
                                         <div key={mat.id} className="bg-white rounded-2xl border border-slate-200 hover:border-emerald-400 hover:shadow-md transition-all flex flex-col justify-between overflow-hidden cursor-pointer" onClick={() => { setSelectedMaterial(mat); setIsPreviewMode(false); }}>
                                             <div className="p-5">
                                                 <div className="flex justify-between items-center mb-3">
-                                                    <div className="flex gap-1.5">
+                                                    <div className="flex gap-1.5 flex-wrap">
                                                         <span className="bg-emerald-50 text-emerald-700 text-[10px] font-bold px-2 py-0.5 rounded border border-emerald-100">{mat.grade}</span>
-                                                        <span className="bg-slate-100 text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded">{mat.subject}</span>
+                                                        <span className="bg-slate-100 text-slate-700 text-[10px] font-bold px-2 py-0.5 rounded">
+                                                            {mat.subject}{mat.subSubject ? ` > ${mat.subSubject}` : ''}
+                                                        </span>
                                                     </div>
                                                     <i className="fa-solid fa-file-arrow-down text-emerald-500 text-lg"></i>
                                                 </div>
@@ -1025,7 +1067,7 @@
                                             </div>
                                         </div>
                                     ))}
-                                    {filteredMaterials.length === 0 && <div className="col-span-full py-16 text-center text-slate-400">등록된 자료가 없습니다.</div>}
+                                    {filteredMaterials.length === 0 && <div className="col-span-full py-16 text-center text-slate-400">조건에 맞는 자료가 없습니다.</div>}
                                 </div>
                             </div>
                         )}
@@ -1037,15 +1079,23 @@
                                         <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400"><i className="fa-solid fa-magnifying-glass"></i></span>
                                         <input type="text" placeholder="질문이나 요청 내용 검색" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="w-full pl-10 pr-4 py-2.5 bg-slate-50 border border-slate-300 rounded-xl focus:ring-2 focus:ring-emerald-500 text-sm" />
                                     </div>
-                                    <button onClick={() => setIsQnaWriteOpen(true)} className="w-full sm:w-auto shrink-0 bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-5 py-2.5 rounded-xl shadow-sm transition-all text-sm flex items-center justify-center gap-1.5"><i className="fa-solid fa-pen"></i>질문 작성하기</button>
+                                    <button onClick={() => {
+                                        setIsQnaWriteOpen(true);
+                                        setNewQnaGrade("1학년"); setNewQnaSubject(Object.keys(CURRICULUM["1학년"])[0]); setNewQnaSubSubject(CURRICULUM["1학년"][Object.keys(CURRICULUM["1학년"])[0]][0] || "");
+                                    }} className="w-full sm:w-auto shrink-0 bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-5 py-2.5 rounded-xl shadow-sm transition-all text-sm flex items-center justify-center gap-1.5"><i className="fa-solid fa-pen"></i>질문 작성하기</button>
                                 </div>
+
+                                {renderFilterBar()}
+
                                 <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm mt-4">
                                     <ul className="divide-y divide-slate-100">
                                         {filteredQna.map(qna => (
                                             <li key={qna.id} className="p-5 hover:bg-slate-50 transition-all cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-4" onClick={() => setSelectedQna(qna)}>
                                                 <div className="flex-1">
-                                                    <div className="flex gap-1.5 mb-1.5">
-                                                        <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded mb-2 inline-block">{qna.subject}</span>
+                                                    <div className="flex gap-1.5 mb-1.5 flex-wrap">
+                                                        <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded inline-block">
+                                                            {qna.grade ? `${qna.grade} | ` : ''}{qna.subject}{qna.subSubject ? ` > ${qna.subSubject}` : ''}
+                                                        </span>
                                                         {qna.answers > 0 && <span className="bg-teal-100 text-teal-800 text-[10px] font-bold px-2 py-0.5 rounded">답변완료</span>}
                                                     </div>
                                                     <h3 className="text-sm font-bold text-slate-800">{qna.title}</h3>
@@ -1056,7 +1106,7 @@
                                                 </div>
                                             </li>
                                         ))}
-                                        {filteredQna.length === 0 && <div className="py-16 text-center text-slate-400">질문이 없습니다.</div>}
+                                        {filteredQna.length === 0 && <div className="py-16 text-center text-slate-400">조건에 맞는 게시글이 없습니다.</div>}
                                     </ul>
                                 </div>
                             </div>
@@ -1133,7 +1183,9 @@
                             <div className="bg-white rounded-3xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-hidden border border-slate-200 flex flex-col">
                                 <div className="p-6 border-b border-slate-100 flex items-start justify-between bg-slate-50">
                                     <div>
-                                        <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded mb-2 inline-block">{selectedQna.subject}</span>
+                                        <span className="bg-emerald-100 text-emerald-800 text-[10px] font-bold px-2 py-0.5 rounded mb-2 inline-block">
+                                            {selectedQna.grade ? `${selectedQna.grade} | ` : ''}{selectedQna.subject}{selectedQna.subSubject ? ` > ${selectedQna.subSubject}` : ''}
+                                        </span>
                                         <h2 className="text-lg font-extrabold text-slate-800 leading-snug">{selectedQna.title}</h2>
                                         <p className="text-xs text-slate-400 mt-1">작성자: {selectedQna.author} | {selectedQna.date}</p>
                                     </div>
@@ -1166,7 +1218,6 @@
                         </div>
                     )}
 
-                    {/* 최고 관리자 콘솔 모달 (안전 가드 완전 적용) */}
                     {isAdminConsoleOpen && (
                         <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
                             <div className="bg-white rounded-3xl shadow-2xl max-w-2xl w-full overflow-hidden border border-slate-200">
@@ -1264,9 +1315,84 @@
                         </div>
                     )}
 
-                    {isQnaWriteOpen && <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"><div className="bg-white rounded-3xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200"><div className="p-5 border-b border-slate-100 flex justify-between bg-slate-50"><h2 className="text-base font-bold"><i className="fa-solid fa-pen text-emerald-600 mr-2"></i>질문 작성</h2><button onClick={()=>setIsQnaWriteOpen(false)} className="text-slate-400 hover:text-slate-600"><i className="fa-solid fa-xmark"></i></button></div><form onSubmit={handleQnaSubmit} className="p-6 space-y-4"><input type="text" placeholder="제목" value={newQnaTitle} onChange={(e)=>setNewQnaTitle(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-sm" required /><textarea placeholder="내용" value={newQnaContent} onChange={(e)=>setNewQnaContent(e.target.value)} rows="5" className="w-full px-3 py-2 border rounded-xl text-sm" required></textarea><button type="submit" className="w-full bg-emerald-600 text-white font-bold py-3 rounded-xl shadow text-sm">등록</button></form></div></div>}
+                    {isQnaWriteOpen && (
+                        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                            <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200">
+                                <div className="p-5 border-b border-slate-100 flex justify-between bg-slate-50">
+                                    <h2 className="text-base font-bold"><i className="fa-solid fa-pen text-emerald-600 mr-2"></i>질문/요청 작성</h2>
+                                    <button onClick={()=>setIsQnaWriteOpen(false)} className="text-slate-400 hover:text-slate-600"><i className="fa-solid fa-xmark"></i></button>
+                                </div>
+                                <form onSubmit={handleQnaSubmit} className="p-6 space-y-4">
+                                    <input type="text" placeholder="제목" value={newQnaTitle} onChange={(e)=>setNewQnaTitle(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-sm" required />
+                                    
+                                    {/* QnA용 계층형 드롭다운 */}
+                                    <div className="flex gap-2">
+                                        <select value={newQnaGrade} onChange={(e) => {
+                                            const g = e.target.value; setNewQnaGrade(g);
+                                            const firstSubj = Object.keys(CURRICULUM[g])[0] || ""; setNewQnaSubject(firstSubj);
+                                            setNewQnaSubSubject(CURRICULUM[g][firstSubj]?.[0] || "");
+                                        }} className="flex-1 px-3 py-2 border rounded-xl text-xs">
+                                            {Object.keys(CURRICULUM).map(g => <option key={g} value={g}>{g}</option>)}
+                                        </select>
+                                        <select value={newQnaSubject} onChange={(e) => {
+                                            const s = e.target.value; setNewQnaSubject(s);
+                                            setNewQnaSubSubject(CURRICULUM[newQnaGrade][s]?.[0] || "");
+                                        }} className="flex-1 px-3 py-2 border rounded-xl text-xs">
+                                            {Object.keys(CURRICULUM[newQnaGrade]).map(s => <option key={s} value={s}>{s}</option>)}
+                                        </select>
+                                    </div>
+                                    {CURRICULUM[newQnaGrade][newQnaSubject]?.length > 0 && (
+                                        <select value={newQnaSubSubject} onChange={(e) => setNewQnaSubSubject(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-xs">
+                                            {CURRICULUM[newQnaGrade][newQnaSubject].map(ss => <option key={ss} value={ss}>{ss}</option>)}
+                                        </select>
+                                    )}
+
+                                    <textarea placeholder="내용" value={newQnaContent} onChange={(e)=>setNewQnaContent(e.target.value)} rows="5" className="w-full px-3 py-2 border rounded-xl text-sm" required></textarea>
+                                    <button type="submit" className="w-full bg-emerald-600 text-white font-bold py-3 rounded-xl shadow text-sm">등록</button>
+                                </form>
+                            </div>
+                        </div>
+                    )}
                     
-                    {isUploadOpen && <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4"><div className="bg-white rounded-3xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200"><div className="p-5 border-b border-slate-100 flex justify-between bg-slate-50"><h2 className="text-base font-bold">파일 업로드</h2><button onClick={()=>setIsUploadOpen(false)} className="text-slate-400 hover:text-slate-600"><i className="fa-solid fa-xmark"></i></button></div><form onSubmit={handleUpload} className="p-6 space-y-4"><input type="text" placeholder="제목" value={newTitle} onChange={(e)=>setNewTitle(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-xs" disabled={uploadProgress>0} required /><div className="flex gap-2"><select value={newGrade} onChange={(e)=>setNewGrade(e.target.value)} className="flex-1 px-3 py-2 border rounded-xl text-xs"><option value="1학년">1학년</option><option value="2학년">2학년</option><option value="3학년">3학년</option></select><select value={newSubject} onChange={(e)=>setNewSubject(e.target.value)} className="flex-1 px-3 py-2 border rounded-xl text-xs"><option value="국어">국어</option><option value="수학">수학</option><option value="영어">영어</option><option value="물리학 I">물리학 I</option><option value="화학 I">화학 I</option></select></div><input type="file" onChange={(e)=>setNewFile(e.target.files[0])} className="w-full text-xs" required disabled={uploadProgress>0} /><textarea placeholder="설명" value={newDescription} onChange={(e)=>setNewDescription(e.target.value)} rows="3" className="w-full px-3 py-2 border rounded-xl text-xs" required></textarea><button type="submit" disabled={uploadProgress>0} className="w-full bg-emerald-600 text-white font-bold py-3 rounded-xl text-sm">{uploadProgress>0?'업로드 중...':'등록'}</button></form></div></div>}
+                    {isUploadOpen && (
+                        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+                            <div className="bg-white rounded-3xl shadow-2xl max-w-md w-full overflow-hidden border border-slate-200">
+                                <div className="p-5 border-b border-slate-100 flex justify-between bg-slate-50">
+                                    <h2 className="text-base font-bold">자료 제공하기</h2>
+                                    <button onClick={()=>setIsUploadOpen(false)} className="text-slate-400 hover:text-slate-600"><i className="fa-solid fa-xmark"></i></button>
+                                </div>
+                                <form onSubmit={handleUpload} className="p-6 space-y-4">
+                                    <input type="text" placeholder="제목" value={newTitle} onChange={(e)=>setNewTitle(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-xs" disabled={uploadProgress>0} required />
+                                    
+                                    {/* 업로드용 계층형 드롭다운 */}
+                                    <div className="flex gap-2">
+                                        <select value={newGrade} onChange={(e) => {
+                                            const g = e.target.value; setNewGrade(g);
+                                            const firstSubj = Object.keys(CURRICULUM[g])[0] || ""; setNewSubject(firstSubj);
+                                            setNewSubSubject(CURRICULUM[g][firstSubj]?.[0] || "");
+                                        }} className="flex-1 px-3 py-2 border rounded-xl text-xs">
+                                            {Object.keys(CURRICULUM).map(g => <option key={g} value={g}>{g}</option>)}
+                                        </select>
+                                        <select value={newSubject} onChange={(e) => {
+                                            const s = e.target.value; setNewSubject(s);
+                                            setNewSubSubject(CURRICULUM[newGrade][s]?.[0] || "");
+                                        }} className="flex-1 px-3 py-2 border rounded-xl text-xs">
+                                            {Object.keys(CURRICULUM[newGrade]).map(s => <option key={s} value={s}>{s}</option>)}
+                                        </select>
+                                    </div>
+                                    {CURRICULUM[newGrade][newSubject]?.length > 0 && (
+                                        <select value={newSubSubject} onChange={(e) => setNewSubSubject(e.target.value)} className="w-full px-3 py-2 border rounded-xl text-xs">
+                                            {CURRICULUM[newGrade][newSubject].map(ss => <option key={ss} value={ss}>{ss}</option>)}
+                                        </select>
+                                    )}
+
+                                    <input type="file" onChange={(e)=>setNewFile(e.target.files[0])} className="w-full text-xs" required disabled={uploadProgress>0} />
+                                    <textarea placeholder="설명" value={newDescription} onChange={(e)=>setNewDescription(e.target.value)} rows="3" className="w-full px-3 py-2 border rounded-xl text-xs" required></textarea>
+                                    <button type="submit" disabled={uploadProgress>0} className="w-full bg-emerald-600 text-white font-bold py-3 rounded-xl text-sm">{uploadProgress>0?'업로드 중...':'등록'}</button>
+                                </form>
+                            </div>
+                        </div>
+                    )}
 
                     {toast && <div className="fixed bottom-4 right-4 z-[99] bg-slate-900 text-white py-3 px-5 rounded-xl text-xs shadow-xl">{toast.message}</div>}
                     {customAlert && <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[100] p-4"><div className="bg-white p-6 rounded-2xl max-w-sm w-full text-center shadow-2xl"><h3 className="font-bold text-slate-800 mb-2">{customAlert.title}</h3><p className="text-xs text-slate-500 mb-4 whitespace-pre-wrap">{customAlert.message}</p><button onClick={()=>setCustomAlert(null)} className="w-full bg-slate-800 text-white text-xs font-bold py-2 rounded-xl">확인</button></div></div>}
