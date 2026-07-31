@@ -809,25 +809,19 @@
             };
             const filteredDisplayUsers = getDisplayUserList();
 
-            // 🔥 필터 바 렌더링 컴포넌트 (전체 선택 시 모든 카테고리 표시되도록 개선)
+            // 🔥 필터 바 렌더링 컴포넌트 (과목이 '전체'일 때 선택과목 숨김 처리)
             const renderFilterBar = () => {
                 const availableMainSubjects = activeGradeFilter === "전체"
                     ? ["전체", ...new Set(Object.values(CURRICULUM).flatMap(g => Object.keys(g)))]
                     : ["전체", ...Object.keys(CURRICULUM[activeGradeFilter])];
 
                 let subSubjectsList = [];
-                if (activeGradeFilter === "전체") {
-                    if (activeSubjectFilter === "전체") {
-                        // 학년 전체 + 과목 전체 -> 모든 세부 과목 표시
-                        subSubjectsList = [...new Set(Object.values(CURRICULUM).flatMap(g => Object.values(g)).flat())];
-                    } else {
+                
+                // 과목이 '전체'가 아닐 때만 세부 과목 목록을 가져옵니다. (전체일 땐 빈 배열 유지 -> 숨김)
+                if (activeSubjectFilter !== "전체") {
+                    if (activeGradeFilter === "전체") {
                         // 학년 전체 + 특정 과목 -> 해당 과목의 모든 세부 과목 표시
                         subSubjectsList = [...new Set(Object.values(CURRICULUM).flatMap(g => g[activeSubjectFilter] || []))];
-                    }
-                } else {
-                    if (activeSubjectFilter === "전체") {
-                        // 특정 학년 + 과목 전체 -> 해당 학년의 모든 세부 과목 표시
-                        subSubjectsList = Object.values(CURRICULUM[activeGradeFilter]).flat();
                     } else {
                         // 특정 학년 + 특정 과목 -> 해당 카테고리 세부 과목 표시
                         subSubjectsList = CURRICULUM[activeGradeFilter][activeSubjectFilter] || [];
