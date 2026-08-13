@@ -191,9 +191,11 @@
             const [newGrade, setNewGrade] = useState("1학년");
             const [newSubject, setNewSubject] = useState("수학");
             const [newSubSubject, setNewSubSubject] = useState("");
-            const [newFile, setNewFile] = useState(null); 
+            const [newFiles, setNewFiles] = useState([]); 
             const [newDescription, setNewDescription] = useState("");
             const [uploadProgress, setUploadProgress] = useState(0); 
+            
+            const [previewFileUrl, setPreviewFileUrl] = useState(null);
 
             // QnA 작성 상태 확장
             const [newQnaTitle, setNewQnaTitle] = useState("");
@@ -605,7 +607,7 @@
             const handleUpload = async (e) => {
                 e.preventDefault();
                 if (!user) return;
-                if (!newTitle || !newFile || !newDescription) return triggerAlert("자료 정보를 모두 채워주세요.");
+                if (!newTitle || newFiles.length === 0 || !newDescription) return triggerAlert("자료 정보를 모두 채워주세요.");
                 if (isLocalMode) return triggerAlert("클라우드 동기화가 꺼져 있습니다.");
 
                 const newId = String(Date.now());
@@ -613,37 +615,65 @@
 
                 try {
                     const { ref, uploadBytesResumable, getDownloadURL, doc, setDoc } = window.firebaseMethods;
-                    const fileRef = ref(window.storage, `materials/${newId}_${newFile.name}`);
-                    const uploadTask = uploadBytesResumable(fileRef, newFile);
                     
-                    uploadTask.on('state_changed', 
-                        (snapshot) => { setUploadProgress(Math.max(5, Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100))); }, 
-                        (error) => { triggerAlert("파일 업로드 오류"); setUploadProgress(0); }, 
-                        async () => {
-                            const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
-                            setUploadProgress(100);
+                    let uploadedAttachments = [];
+                    let totalBytes = newFiles.reduce((acc, f) => acc + f.size, 0);
+                    let transferredBytes = 0;
 
-                            const formatDoc = {
-                                id: newId, title: newTitle, grade: newGrade, subject: newSubject, subSubject: newSubSubject, type: "요약 노트",
-                                uploader: user.name, uploaderEmail: user.email, fileType: newFile.name.split('.').pop().toLowerCase(),
-                                fileName: newFile.name, downloads: 0, likes: 0, isVerified: (user.rank || 1) >= 2,
-                                description: newDescription, comments: [], date: new Date().toISOString().split('T')[0], fileUrl: downloadUrl 
-                            };
-                            await setDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'materials', newId), formatDoc);
-                            showToast("자료가 성공적으로 업로드되었습니다.");
-                            setIsUploadOpen(false); setNewTitle(""); setNewFile(null); setNewDescription(""); setUploadProgress(0);
-                        }
-                    );
+                    // 여러 개의 파일을 순차적으로 업로드 처리
+                    for (let i = 0; i < newFiles.length; i++) {
+                        const file = newFiles[i];
+                        const fileRef = ref(window.storage, `materials/${newId}_${file.name}`);
+                        
+                        await new Promise((resolve, reject) => {
+                            const uploadTask = uploadBytesResumable(fileRef, file);
+                            uploadTask.on('state_changed', 
+                                (snapshot) => { 
+                                    const currentProgress = Math.round(((transferredBytes + snapshot.bytesTransferred) / totalBytes) * 100);
+                                    setUploadProgress(Math.max(5, currentProgress)); 
+                                }, 
+                                (error) => reject(error), 
+                                async () => {
+                                    const url = await getDownloadURL(uploadTask.snapshot.ref);
+                                    uploadedAttachments.push({
+                                        fileName: file.name,
+                                        fileUrl: url,
+                                        fileType: file.name.split('.').pop().toLowerCase()
+                                    });
+                                    transferredBytes += file.size;
+                                    resolve();
+                                }
+                            );
+                        });
+                    }
+
+                    setUploadProgress(100);
+
+                    // 다중 파일 정보를 포함하여 DB에 문서 저장
+                    const formatDoc = {
+                        id: newId, title: newTitle, grade: newGrade, subject: newSubject, subSubject: newSubSubject, type: "요약 노트",
+                        uploader: user.name, uploaderEmail: user.email, 
+                        fileType: uploadedAttachments[0].fileType,
+                        fileName: uploadedAttachments[0].fileName, 
+                        fileUrl: uploadedAttachments[0].fileUrl, 
+                        attachments: uploadedAttachments, // 여러 파일 배열 저장
+                        downloads: 0, likes: 0, isVerified: (user.rank || 1) >= 2,
+                        description: newDescription, comments: [], date: new Date().toISOString().split('T')[0]
+                    };
+                    await setDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'materials', newId), formatDoc);
+                    showToast("자료가 성공적으로 업로드되었습니다.");
+                    setIsUploadOpen(false); setNewTitle(""); setNewFiles([]); setNewDescription(""); setUploadProgress(0);
                 } catch (err) { triggerAlert("서버 통신 오류"); setUploadProgress(0); }
             };
 
-            const handleDownload = async (mat) => {
+            const handleDownload = async (mat, attachment = null) => {
                 if (!user) return;
                 if (!isLocalMode && window.firebaseMethods) {
                     const { doc, updateDoc } = window.firebaseMethods;
                     updateDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'materials', mat.id), { downloads: (mat.downloads || 0) + 1 }).catch(()=>{});
                 }
-                if (mat.fileUrl) { window.open(mat.fileUrl, '_blank'); showToast("원본 파일을 다운로드합니다."); }
+                const urlToDownload = attachment ? attachment.fileUrl : mat.fileUrl;
+                if (urlToDownload) { window.open(urlToDownload, '_blank'); showToast("원본 파일을 다운로드합니다."); }
                 else triggerAlert("파일을 찾을 수 없습니다.");
             };
 
@@ -689,7 +719,12 @@
                     if (!isLocalMode && window.firebaseMethods) {
                         const { doc, deleteDoc, ref, deleteObject } = window.firebaseMethods;
                         deleteDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'materials', mId)).catch(()=>{});
-                        if (target && target.fileUrl) deleteObject(ref(window.storage, `materials/${mId}_${target.fileName}`)).catch(()=>{});
+                        if (target) {
+                            const atts = target.attachments || [{ fileName: target.fileName }];
+                            atts.forEach(att => {
+                                if (att.fileName) deleteObject(ref(window.storage, `materials/${mId}_${att.fileName}`)).catch(()=>{});
+                            });
+                        }
                     }
                     showToast("삭제되었습니다.");
                 });
@@ -1054,6 +1089,7 @@
                                         setIsUploadOpen(true);
                                         // 업로드 창 열 때 초기값 세팅
                                         setNewGrade("1학년"); setNewSubject(Object.keys(CURRICULUM["1학년"])[0]); setNewSubSubject(CURRICULUM["1학년"][Object.keys(CURRICULUM["1학년"])[0]][0] || "");
+                                        setNewFiles([]);
                                     }} className="w-full sm:w-auto shrink-0 bg-emerald-700 hover:bg-emerald-800 text-white font-bold px-5 py-2.5 rounded-xl shadow-sm transition-all text-sm flex items-center justify-center gap-1.5"><i className="fa-solid fa-upload"></i>파일 제공하기</button>
                                 </div>
                                 
@@ -1165,18 +1201,33 @@
                             <div className="bg-white rounded-3xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-hidden border border-slate-200 flex flex-col">
                                 <div className="p-5 border-b border-slate-100 flex items-start justify-between bg-slate-50">
                                     <h2 className="text-lg font-extrabold text-slate-800 pr-4">{selectedMaterial.title}</h2>
-                                    <button onClick={() => setSelectedMaterial(null)} className="text-slate-400 hover:text-slate-600"><i className="fa-solid fa-xmark text-xl"></i></button>
+                                    <button onClick={() => { setSelectedMaterial(null); setIsPreviewMode(false); setPreviewFileUrl(null); }} className="text-slate-400 hover:text-slate-600"><i className="fa-solid fa-xmark text-xl"></i></button>
                                 </div>
                                 <div className="p-6 overflow-y-auto space-y-6 flex-1">
-                                    {isPreviewMode && selectedMaterial.fileUrl ? (
+                                    {isPreviewMode && previewFileUrl ? (
                                         <div className="bg-slate-900 rounded-xl overflow-hidden shadow-inner h-[60vh] relative">
-                                            <div className="absolute top-2 right-2 flex gap-2"><span className="bg-black/50 text-white text-xs px-2 py-1 rounded font-bold">미리보기</span><button onClick={() => setIsPreviewMode(false)} className="bg-red-500 text-white text-xs px-2 py-1 rounded font-bold"><i className="fa-solid fa-xmark mr-1"></i>닫기</button></div>
-                                            {isPdfOrImage(selectedMaterial.fileName) ? <iframe src={selectedMaterial.fileUrl} className="w-full h-full border-0 bg-white"></iframe> : <div className="w-full h-full flex flex-col items-center justify-center text-slate-400"><p>미리보기 미지원</p><button onClick={() => handleDownload(selectedMaterial)} className="mt-4 bg-emerald-600 text-white font-bold px-4 py-2 rounded-xl text-xs">다운로드</button></div>}
+                                            <div className="absolute top-2 right-2 flex gap-2"><span className="bg-black/50 text-white text-xs px-2 py-1 rounded font-bold">미리보기</span><button onClick={() => { setIsPreviewMode(false); setPreviewFileUrl(null); }} className="bg-red-500 text-white text-xs px-2 py-1 rounded font-bold"><i className="fa-solid fa-xmark mr-1"></i>닫기</button></div>
+                                            <iframe src={previewFileUrl} className="w-full h-full border-0 bg-white"></iframe>
                                         </div>
                                     ) : (
                                         <>
                                             <div><h4 className="text-xs font-bold text-slate-400 uppercase mb-2">분석 및 설명</h4><p className="text-sm text-slate-700 bg-slate-50 p-4 rounded-xl whitespace-pre-wrap">{selectedMaterial.description}</p></div>
-                                            <div className="bg-emerald-50/70 p-4 rounded-xl flex items-center justify-between gap-4"><div className="flex items-center space-x-3 w-full overflow-hidden"><div className="bg-emerald-600 text-white p-3 rounded-xl shrink-0"><i className="fa-solid fa-file-lines text-xl"></i></div><div className="truncate"><p className="text-sm font-bold text-slate-700 truncate">{selectedMaterial.fileName}</p></div></div><div className="flex gap-2 w-full sm:w-auto">{isPdfOrImage(selectedMaterial.fileName) && <button onClick={() => setIsPreviewMode(true)} className="flex-1 bg-teal-700 text-white font-bold px-4 py-2.5 rounded-xl text-xs">미리보기</button>}<button onClick={() => handleDownload(selectedMaterial)} className="flex-1 bg-emerald-600 text-white font-bold px-4 py-2.5 rounded-xl text-xs">다운로드</button></div></div>
+                                            
+                                            <div className="space-y-2">
+                                                <h4 className="text-xs font-bold text-slate-400 uppercase mb-2">첨부 파일</h4>
+                                                {(selectedMaterial.attachments || [{ fileName: selectedMaterial.fileName, fileUrl: selectedMaterial.fileUrl, fileType: selectedMaterial.fileType }]).map((att, idx) => (
+                                                    <div key={idx} className="bg-emerald-50/70 p-4 rounded-xl flex items-center justify-between gap-4">
+                                                        <div className="flex items-center space-x-3 w-full overflow-hidden">
+                                                            <div className="bg-emerald-600 text-white p-3 rounded-xl shrink-0"><i className="fa-solid fa-file-lines text-xl"></i></div>
+                                                            <div className="truncate"><p className="text-sm font-bold text-slate-700 truncate">{att.fileName}</p></div>
+                                                        </div>
+                                                        <div className="flex gap-2 w-full sm:w-auto">
+                                                            {isPdfOrImage(att.fileName) && <button onClick={() => { setPreviewFileUrl(att.fileUrl); setIsPreviewMode(true); }} className="flex-1 bg-teal-700 text-white font-bold px-4 py-2.5 rounded-xl text-xs">미리보기</button>}
+                                                            <button onClick={() => handleDownload(selectedMaterial, att)} className="flex-1 bg-emerald-600 text-white font-bold px-4 py-2.5 rounded-xl text-xs">다운로드</button>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                            </div>
                                         </>
                                     )}
                                     {!isPreviewMode && (
@@ -1400,7 +1451,14 @@
                                         </select>
                                     )}
 
-                                    <input type="file" onChange={(e)=>setNewFile(e.target.files[0])} className="w-full text-xs" required disabled={uploadProgress>0} />
+                                    <div>
+                                        <input type="file" multiple onChange={(e)=>setNewFiles(Array.from(e.target.files))} className="w-full text-xs" required disabled={uploadProgress>0} />
+                                        {newFiles.length > 0 && (
+                                            <div className="mt-2 text-[10px] text-slate-500 flex flex-col gap-1 max-h-20 overflow-y-auto bg-slate-50 p-2 rounded border border-slate-200">
+                                                {newFiles.map((f, i) => <span key={i}><i className="fa-solid fa-file-lines mr-1 text-emerald-600"></i>{f.name}</span>)}
+                                            </div>
+                                        )}
+                                    </div>
                                     <textarea placeholder="설명" value={newDescription} onChange={(e)=>setNewDescription(e.target.value)} rows="3" className="w-full px-3 py-2 border rounded-xl text-xs" required></textarea>
                                     <button type="submit" disabled={uploadProgress>0} className="w-full bg-emerald-600 text-white font-bold py-3 rounded-xl text-sm">{uploadProgress>0?'업로드 중...':'등록'}</button>
                                 </form>
