@@ -674,6 +674,12 @@
             const [newQnaSubject, setNewQnaSubject] = useState("수학");
             const [newQnaSubSubject, setNewQnaSubSubject] = useState("");
 
+            // 프로필 수정 (이름 · 학년)
+            const [isProfileOpen, setIsProfileOpen] = useState(false);
+            const [editName, setEditName] = useState("");
+            const [editGrade, setEditGrade] = useState("1학년");
+            const [profileBusy, setProfileBusy] = useState(false);
+
             const [isAdminConsoleOpen, setIsAdminConsoleOpen] = useState(false);
             const [adminTab, setAdminTab] = useState("config");
             const [adminUserSubTab, setAdminUserSubTab] = useState("active");
@@ -1174,6 +1180,37 @@
                 } catch (e) {
                     triggerAlert("이 계정에는 관리자 권한이 없습니다.");
                 }
+            };
+
+            const openProfileEditor = () => {
+                setEditName(user?.name || "");
+                setEditGrade(user?.grade || "1학년");
+                setIsProfileOpen(true);
+            };
+
+            // 이름·학년만 수정한다. 등급·상태·누적시간은 보안 규칙이
+            // 본인 수정을 막고 있으므로 여기서 시도해도 서버가 거부한다.
+            const handleProfileSave = async (e) => {
+                e.preventDefault();
+                if (profileBusy) return;
+                const name = (editName || "").trim();
+                if (!name) return triggerAlert("이름을 입력해 주세요.");
+                if (name.length > 20) return triggerAlert("이름은 20자 이내로 입력해 주세요.");
+                if (!window.firebaseMethods || !user?.uid) return;
+
+                setProfileBusy(true);
+                const { doc, updateDoc } = window.firebaseMethods;
+                try {
+                    await updateDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'users', user.uid), {
+                        name: name, grade: editGrade
+                    });
+                    setUser(prev => ({ ...prev, name: name, grade: editGrade }));
+                    setIsProfileOpen(false);
+                    showToast("프로필을 수정했습니다.");
+                } catch (err) {
+                    triggerAlert("서버에서 이 변경을 거부했습니다. 잠시 후 다시 시도해 주세요.");
+                }
+                setProfileBusy(false);
             };
 
             const handleLogout = async () => {
@@ -1878,19 +1915,21 @@
                             </div>
 
                             <div className="flex items-center gap-2 sm:gap-3">
-                                <div className="hidden md:flex items-center gap-2.5 glass rounded-2xl pl-3.5 pr-2 py-1.5">
+                                <div className="hidden md:flex items-center gap-2.5 glass rounded-2xl pl-3.5 pr-1.5 py-1.5">
                                     <i className="fa-solid fa-fire text-[11px]" style={{ color: 'var(--brand-lt)' }}></i>
                                     <span className="text-[11px] font-bold font-mono" style={{ color: 'var(--txt-dim)' }}>{fmtHM(myStudyMins)}</span>
                                     <span className="w-px h-4" style={{ background: 'var(--line-str)' }}></span>
-                                    <div className="flex items-center gap-1.5 pr-1.5">
+                                    <button onClick={openProfileEditor} title="프로필 수정"
+                                            className="flex items-center gap-1.5 rounded-xl px-2 py-1 -my-0.5 transition-colors hover:bg-white/10 group">
                                         {currentUserRank >= 2 && (
                                             <span className={`tag ${currentUserRank === 4 ? 'tag-violet' : currentUserRank === 3 ? 'tag-blue' : 'tag-brand'}`}>{user.position}</span>
                                         )}
                                         <span className="text-xs font-extrabold">{user.name}</span>
-                                    </div>
+                                        <i className="fa-solid fa-pen text-[9px] opacity-0 group-hover:opacity-100 transition-opacity" style={{ color: 'var(--txt-faint)' }}></i>
+                                    </button>
                                 </div>
 
-                                <span className="md:hidden text-xs font-extrabold truncate max-w-[90px]">{user.name}</span>
+                                <button onClick={openProfileEditor} className="md:hidden text-xs font-extrabold truncate max-w-[90px]" title="프로필 수정">{user.name}</button>
 
                                 {currentUserRank >= 2 && (
                                     <button onClick={() => { setIsAdminConsoleOpen(true); setAdminTab("config"); }} className="icon-btn relative" title="관리자 시스템 오픈">
@@ -2387,6 +2426,64 @@
                                         </form>
                                     </div>
                                 </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* ── 프로필 수정 ────────────────────── */}
+                    {isProfileOpen && (
+                        <div className="modal-bd fixed inset-0 bg-black/75 backdrop-blur-md flex items-center justify-center z-50 p-4">
+                            <div className="modal-card glass-solid rounded-[28px] max-w-sm w-full overflow-hidden">
+                                <div className="p-5 border-b flex justify-between items-center" style={{ borderColor: 'var(--line)' }}>
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-9 h-9 rounded-xl grid place-items-center" style={{ background: 'rgba(16,185,129,.13)' }}>
+                                            <i className="fa-solid fa-id-card text-sm" style={{ color: 'var(--brand-lt)' }}></i>
+                                        </div>
+                                        <div>
+                                            <div className="eyebrow text-[8px] mb-1">Profile</div>
+                                            <h2 className="text-sm font-extrabold">프로필 수정</h2>
+                                        </div>
+                                    </div>
+                                    <button onClick={() => setIsProfileOpen(false)} className="icon-btn"><i className="fa-solid fa-xmark"></i></button>
+                                </div>
+                                <form onSubmit={handleProfileSave} className="p-6 space-y-4">
+                                    <div>
+                                        <label className="eyebrow text-[9px] block mb-2">이름</label>
+                                        <input type="text" value={editName} onChange={(e) => setEditName(e.target.value)}
+                                               className="fld" maxLength="20" disabled={profileBusy} required />
+                                    </div>
+                                    <div>
+                                        <label className="eyebrow text-[9px] block mb-2">학년</label>
+                                        <select value={editGrade} onChange={(e) => setEditGrade(e.target.value)} className="fld" disabled={profileBusy}>
+                                            <option value="1학년">1학년</option>
+                                            <option value="2학년">2학년</option>
+                                            <option value="3학년">3학년</option>
+                                        </select>
+                                    </div>
+
+                                    <div className="glass rounded-xl p-3.5 space-y-1.5">
+                                        <div className="flex justify-between text-[11px]">
+                                            <span style={{ color: 'var(--txt-faint)' }}>이메일</span>
+                                            <span className="font-mono truncate ml-3" style={{ color: 'var(--txt-dim)' }}>{user.email}</span>
+                                        </div>
+                                        <div className="flex justify-between text-[11px]">
+                                            <span style={{ color: 'var(--txt-faint)' }}>직책</span>
+                                            <span className="font-bold" style={{ color: 'var(--txt-dim)' }}>{user.position}</span>
+                                        </div>
+                                        <div className="flex justify-between text-[11px]">
+                                            <span style={{ color: 'var(--txt-faint)' }}>누적 학습시간</span>
+                                            <span className="font-mono font-bold" style={{ color: 'var(--brand-lt)' }}>{fmtHM(myStudyMins)}</span>
+                                        </div>
+                                    </div>
+                                    <p className="text-[10px] leading-relaxed" style={{ color: 'var(--txt-faint)' }}>
+                                        이메일·직책·누적 학습시간은 본인이 변경할 수 없습니다.
+                                        이미 올린 자료와 댓글에 남은 이름은 소급 변경되지 않습니다.
+                                    </p>
+
+                                    <button type="submit" disabled={profileBusy} className="btn btn-primary w-full font-bold py-3.5 rounded-2xl text-sm">
+                                        {profileBusy ? '저장 중...' : '저장'}
+                                    </button>
+                                </form>
                             </div>
                         </div>
                     )}
