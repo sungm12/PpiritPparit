@@ -1023,11 +1023,17 @@
                                 totalStudyMins: 0,
                                 createdAt: Date.now()
                             });
-                            await sendEmailVerification(cred.user).catch(()=>{});
+                            let mailError = null;
+                            try { await sendEmailVerification(cred.user); }
+                            catch (mailErr) { mailError = mailErr.code || String(mailErr); }
+
                             purgeLegacyLocalAccount(loginEmail);
                             setAuthBusy(false);
                             return triggerAlert(
-                                "보안 강화를 위해 인증 방식이 바뀌었습니다.\n기존 계정을 같은 비밀번호로 이관했습니다.\n\n인증 메일을 보냈으니 메일함에서 확인을 완료해 주세요.",
+                                "보안 강화를 위해 인증 방식이 바뀌었습니다.\n기존 계정을 같은 비밀번호로 이관했습니다.\n\n" +
+                                (mailError
+                                    ? `인증 메일 발송에 실패했습니다. (${mailError})\n대기 화면에서 '재발송'을 눌러 주세요.`
+                                    : "인증 메일을 보냈습니다. 받은편지함에 없으면 스팸함과 '프로모션' 탭도 확인해 주세요."),
                                 "계정 이관 완료"
                             );
                         } catch (mErr) {
@@ -1070,13 +1076,28 @@
                         createdAt: Date.now()
                     });
 
-                    await sendEmailVerification(cred.user).catch(()=>{});
+                    // 발송 실패를 삼키지 않고 그대로 알린다.
+                    let mailError = null;
+                    try {
+                        await sendEmailVerification(cred.user);
+                    } catch (mailErr) {
+                        mailError = mailErr.code || String(mailErr);
+                    }
+
                     purgeLegacyLocalAccount(signUpEmail);
                     setAuthBusy(false);
-                    triggerAlert(
-                        `${signUpEmail} 주소로 인증 메일을 보냈습니다.\n메일함에서 인증을 완료해야 자료 업로드와 댓글 작성이 가능합니다.`,
-                        "가입 완료"
-                    );
+
+                    if (mailError) {
+                        triggerAlert(
+                            `계정은 만들어졌지만 인증 메일 발송에 실패했습니다.\n(${mailError})\n\n로그인 후 대기 화면에서 '재발송'을 눌러 다시 시도해 주세요.`,
+                            "인증 메일 발송 실패"
+                        );
+                    } else {
+                        triggerAlert(
+                            `${signUpEmail} 주소로 인증 메일을 보냈습니다.\n\n받은편지함에 없으면 스팸함과 '프로모션' 탭도 확인해 주세요.\n보낸사람: noreply@dogye-archive.firebaseapp.com`,
+                            "가입 완료"
+                        );
+                    }
                 } catch (err) {
                     setAuthBusy(false);
                     triggerAlert(authErrorMessage(err.code));
@@ -1100,7 +1121,10 @@
                 if (!authUser || !window.firebaseMethods) return;
                 try {
                     await window.firebaseMethods.sendEmailVerification(authUser);
-                    showToast("인증 메일을 다시 보냈습니다. 메일함을 확인해 주세요.");
+                    triggerAlert(
+                        "인증 메일을 다시 보냈습니다.\n\n받은편지함에 없으면 스팸함과 '프로모션' 탭을 확인해 주세요.\n보낸사람: noreply@dogye-archive.firebaseapp.com",
+                        "메일 재발송 완료"
+                    );
                 } catch (err) {
                     triggerAlert(authErrorMessage(err.code));
                 }
