@@ -612,7 +612,7 @@
             createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut,
             sendEmailVerification, sendPasswordResetEmail, reload
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, addDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, addDoc, onSnapshot, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
 
         const firebaseConfig = {
@@ -650,6 +650,7 @@
                 collection,
                 addDoc,
                 onSnapshot,
+                writeBatch,
                 ref,
                 uploadBytesResumable,
                 getDownloadURL,
@@ -1166,6 +1167,185 @@
             );
         };
 
+        /* ── 핀볼 추첨 ─────────────────────────────────────────────
+           기간 안에 학습부가 승인한 자습 시간으로 응모권이 쌓인다.
+           기본 시간(30h)을 채우면 1장, 그 뒤 단위 시간(10h)마다 1장씩.
+           추첨은 관리자가 한 번 돌리고 결과를 서버에 적어두므로,
+           모든 학생이 같은 결과와 같은 공 궤적을 본다. */
+        const PINBALL_DEFAULT = { baseHours: 30, stepHours: 10 };
+
+        const pinballTickets = (mins, baseHours, stepHours) => {
+            const base = (baseHours || PINBALL_DEFAULT.baseHours) * 60;
+            const step = (stepHours || PINBALL_DEFAULT.stepHours) * 60;
+            if (!mins || mins < base) return 0;
+            return 1 + Math.floor((mins - base) / step);
+        };
+
+        // 같은 씨앗이면 어디서 보든 공이 똑같이 튄다.
+        const mulberry32 = (seed) => {
+            let a = seed >>> 0;
+            return () => {
+                a = (a + 0x6D2B79F5) >>> 0;
+                let t = Math.imul(a ^ (a >>> 15), 1 | a);
+                t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+                return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+            };
+        };
+
+        /* 핀볼 판. 캔버스로 그린다 — 공이 많아도 부드럽게 돈다. */
+        const PinballBoard = ({ tickets, draw, winnerName, onFinish }) => {
+            const canvasRef = useRef(null);
+            const stateRef  = useRef(null);
+            const phaseRef  = useRef('idle');
+            const [phase, setPhase] = useState('idle');   // idle | falling | done
+            useEffect(() => { phaseRef.current = phase; }, [phase]);
+
+            const W = 340, H = 420;
+            const PEG_ROWS = 9, PEG_GAP = 34, PEG_R = 3.6, BALL_R = 6.2;
+
+            useEffect(() => {
+                const cvs = canvasRef.current;
+                if (!cvs) return;
+                const ctx = cvs.getContext('2d');
+                const dpr = Math.min(window.devicePixelRatio || 1, 2);
+                cvs.width = W * dpr; cvs.height = H * dpr;
+                ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+                const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+                // 못 배치
+                const pegs = [];
+                for (let r = 0; r < PEG_ROWS; r++) {
+                    const y = 118 + r * 30;
+                    const n = 7 + (r % 2);
+                    const off = (r % 2) ? 0 : PEG_GAP / 2;
+                    for (let c = 0; c < n; c++) {
+                        const x = W/2 - ((n - 1) * PEG_GAP) / 2 + c * PEG_GAP + off - (r % 2 ? 0 : 0);
+                        if (x > 14 && x < W - 14) pegs.push({ x, y });
+                    }
+                }
+
+                const rand = mulberry32(draw ? (draw.seed || 1) : 12345);
+
+                // 공 만들기 — 응모권 하나가 공 하나. 너무 많으면 화면용으로 줄인다.
+                const shown = Math.min(tickets.length, 90);
+                const drawn = !!(draw && draw.drawnAt);
+                const balls = tickets.slice(0, shown).map((t, i) => {
+                    // 움직임을 줄이도록 설정했고 이미 추첨이 끝났다면, 굴리지 않고 바닥에 놓는다
+                    if (reduce && drawn) {
+                        const perRow = 22, row = Math.floor(i / perRow), col = i % perRow;
+                        return { x: 24 + col * ((W - 48) / perRow) + (row % 2 ? 6 : 0),
+                                 y: H - 34 - row * 11, vx: 0, vy: 0,
+                                 color: t.color, winner: !!t.winner, seedPhase: 0, settled: true };
+                    }
+                    return {
+                        x: W/2 + (rand() - .5) * 120,
+                        y: 40 + (rand() - .5) * 46,
+                        vx: 0, vy: 0,
+                        color: t.color,
+                        winner: !!t.winner,
+                        seedPhase: rand() * Math.PI * 2,
+                        settled: false
+                    };
+                });
+
+                stateRef.current = { ctx, pegs, balls, reduce, t0: performance.now() };
+
+                let raf;
+                const loop = (now) => {
+                    const st = stateRef.current;
+                    if (!st) return;
+                    const falling = phaseRef.current === 'falling' || phaseRef.current === 'done';
+                    ctx.clearRect(0, 0, W, H);
+
+                    // 판 배경
+                    const grad = ctx.createLinearGradient(0, 0, 0, H);
+                    grad.addColorStop(0, 'rgba(255,255,255,.05)');
+                    grad.addColorStop(1, 'rgba(255,255,255,.02)');
+                    ctx.fillStyle = grad;
+                    ctx.beginPath(); ctx.roundRect(6, 6, W-12, H-12, 22); ctx.fill();
+                    ctx.strokeStyle = 'rgba(128,128,128,.28)'; ctx.lineWidth = 1.5; ctx.stroke();
+
+                    // 못
+                    ctx.fillStyle = 'rgba(150,150,160,.55)';
+                    st.pegs.forEach(p => { ctx.beginPath(); ctx.arc(p.x, p.y, PEG_R, 0, 6.283); ctx.fill(); });
+
+                    // 당첨 컵
+                    const cupY = H - 54, cupW = 96;
+                    ctx.strokeStyle = '#C7F03E'; ctx.lineWidth = 3;
+                    ctx.beginPath();
+                    ctx.moveTo(W/2 - cupW/2, cupY); ctx.lineTo(W/2 - cupW/2, H - 20);
+                    ctx.lineTo(W/2 + cupW/2, H - 20); ctx.lineTo(W/2 + cupW/2, cupY);
+                    ctx.stroke();
+                    ctx.fillStyle = 'rgba(199,240,62,.13)';
+                    ctx.fillRect(W/2 - cupW/2, cupY, cupW, H - 20 - cupY);
+
+                    // 공
+                    st.balls.forEach(b => {
+                        if (falling && !b.settled) {
+                            b.vy += st.reduce ? 1.2 : 0.34;
+                            b.x += b.vx; b.y += b.vy;
+                            b.vx *= 0.995;
+
+                            st.pegs.forEach(p => {
+                                const dx = b.x - p.x, dy = b.y - p.y;
+                                const d = Math.hypot(dx, dy);
+                                if (d < PEG_R + BALL_R && d > 0) {
+                                    const nx = dx / d, ny = dy / d;
+                                    b.x = p.x + nx * (PEG_R + BALL_R);
+                                    b.y = p.y + ny * (PEG_R + BALL_R);
+                                    const dot = b.vx * nx + b.vy * ny;
+                                    b.vx = (b.vx - 2 * dot * nx) * 0.52 + (nx > 0 ? .45 : -.45);
+                                    b.vy = Math.max(.4, (b.vy - 2 * dot * ny) * 0.42);
+                                }
+                            });
+                            if (b.x < 16 + BALL_R) { b.x = 16 + BALL_R; b.vx = Math.abs(b.vx) * .6; }
+                            if (b.x > W - 16 - BALL_R) { b.x = W - 16 - BALL_R; b.vx = -Math.abs(b.vx) * .6; }
+                            if (b.y > H - 30 - BALL_R) { b.y = H - 30 - BALL_R; b.vy *= -.22; b.vx *= .7;
+                                if (Math.abs(b.vy) < .6) b.settled = true; }
+                        } else if (phaseRef.current === 'idle') {
+                            // 대기 중에는 위쪽에서 살짝 흔들린다
+                            const t = (now - st.t0) / 1000;
+                            b.y += Math.sin(t * 1.6 + b.seedPhase) * 0.16;
+                            b.x += Math.cos(t * 1.1 + b.seedPhase) * 0.12;
+                        }
+
+                        ctx.beginPath(); ctx.arc(b.x, b.y, BALL_R, 0, 6.283);
+                        ctx.fillStyle = b.color; ctx.fill();
+                        ctx.lineWidth = 1.6; ctx.strokeStyle = '#3D3229'; ctx.stroke();
+                        if (b.winner && phaseRef.current === 'done') {
+                            ctx.beginPath(); ctx.arc(b.x, b.y, BALL_R + 5, 0, 6.283);
+                            ctx.strokeStyle = '#FFD166'; ctx.lineWidth = 2.6; ctx.stroke();
+                        }
+                    });
+
+                    raf = requestAnimationFrame(loop);
+                };
+                loop(performance.now());   // 첫 프레임은 즉시 그린다
+                return () => cancelAnimationFrame(raf);
+            }, [tickets.length, draw && draw.drawnAt]);
+
+            // 추첨 결과가 도착하면 자동으로 굴린다
+            useEffect(() => {
+                if (!draw || !draw.drawnAt) { setPhase('idle'); return; }
+                setPhase('falling');
+                const t = setTimeout(() => { setPhase('done'); onFinish && onFinish(); }, 4200);
+                return () => clearTimeout(t);
+            }, [draw && draw.drawnAt]);
+
+            return (
+                <div className="pinball-wrap">
+                    <canvas ref={canvasRef} style={{ width: '100%', maxWidth: W, height: 'auto', display: 'block', margin: '0 auto' }} />
+                    {phase === 'done' && winnerName && (
+                        <div className="glass rounded-2xl p-4 mt-4 text-center reveal">
+                            <div className="eyebrow text-[9px] mb-2">Winner</div>
+                            <div className="text-xl font-extrabold" style={{ color: 'var(--lime-ink)' }}>{winnerName}</div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
         // 섹션 헤더
         const SectionTitle = ({ eyebrow, title, right }) => (
             <div className="flex items-end justify-between gap-4 mb-5">
@@ -1238,6 +1418,22 @@
             const [newQnaSubject, setNewQnaSubject] = useState("수학");
             const [newQnaSubSubject, setNewQnaSubSubject] = useState("");
 
+            // 초기화 (최고 관리자 전용)
+            const [resetHoursDate, setResetHoursDate] = useState('');
+            const [resetHoursTotals, setResetHoursTotals] = useState(false);
+            const [resetMatsDate, setResetMatsDate] = useState('');
+            const [resetBusy, setResetBusy] = useState(false);
+            const [resetProgress, setResetProgress] = useState(0);
+
+            // 핀볼 추첨
+            const [pinballSettings, setPinballSettings] = useState({ enabled: false, startDate: '', endDate: '', prize: '', baseHours: 30, stepHours: 10 });
+            const [editPinball, setEditPinball] = useState(null);
+            const [pinballDraw, setPinballDraw] = useState(null);
+            // 학습부가 미리 계산해 둔 응모 명단. 학생은 이것만 읽는다.
+            const [pinballRoster, setPinballRoster] = useState(null);
+            const [rosterBusy, setRosterBusy] = useState(false);
+            const [pinballBusy, setPinballBusy] = useState(false);
+
             // 성장 캐릭터 — 이름은 학생이 직접 짓는다
             const [isPetOpen, setIsPetOpen] = useState(false);
             const [editPetName, setEditPetName] = useState("");
@@ -1302,6 +1498,7 @@
             const [authUser, setAuthUser] = useState(null);
             const [authBusy, setAuthBusy] = useState(false);
             const listenersStarted = useRef(false);
+            const studyRecordsBound = useRef(false);
             const unsubscribers = useRef([]);
 
             // 로그아웃 시 실시간 구독을 모두 끊어, 이전 세션 데이터가 남지 않게 한다.
@@ -1309,6 +1506,7 @@
                 unsubscribers.current.forEach(u => { try { u(); } catch (e) {} });
                 unsubscribers.current = [];
                 listenersStarted.current = false;
+                studyRecordsBound.current = false;
                 setMaterials([]); setQnaList([]); setUsersList([]);
                 setLiveStudyUsers([]); setStudyRecords([]);
             };
@@ -1423,8 +1621,16 @@
                                 listenToCloudQna();
                                 listenToCloudSettings();
                                 listenToLiveStudyUsers();
-                                listenToStudyRecords();
                                 listenToCloudUsers();
+                                listenToPinballDraw();
+                                listenToPinballRoster();
+                                // 승인 기록 원본은 임원(rank 2)부터만 내려받는다.
+                                // «공부 시간 데이터» 창이 기간을 직접 재집계해야 해서 원본이 필요하다.
+                                // 일반 학생은 미리 계산된 명단만 읽으므로 남의 기록이 브라우저로 가지 않는다.
+                                if ((profile.rank || 1) >= 2) {
+                                    studyRecordsBound.current = true;
+                                    listenToStudyRecords();
+                                }
                             }
                         } catch (e) {
                             console.warn("프로필을 불러오지 못했습니다.", e);
@@ -1491,6 +1697,15 @@
                 }
             }, [usersList, user?.uid]);
 
+            // 로그인한 뒤에 임원으로 승급되면 그때 승인 기록을 붙인다.
+            // (새로고침을 요구하지 않기 위한 처리)
+            useEffect(() => {
+                if (!user || (user.rank || 1) < 2) return;
+                if (!listenersStarted.current || studyRecordsBound.current) return;
+                studyRecordsBound.current = true;
+                listenToStudyRecords();
+            }, [user?.rank]);
+
             const listenToCloudMaterials = () => {
                 const { collection } = window.firebaseMethods; const onSnapshot = trackedOnSnapshot;
                 onSnapshot(collection(window.db, 'artifacts', window.appId, 'public', 'data', 'materials'), (snapshot) => {
@@ -1518,7 +1733,24 @@
                         const data = docSnap.data();
                         if (data.dday) { setDdaySettings(data.dday); setEditDday(data.dday); }
                         if (data.notice !== undefined) { setNoticeText(data.notice); setEditNotice(data.notice); }
+                        if (data.pinball) { setPinballSettings(data.pinball); setEditPinball(data.pinball); }
                     }
+                });
+            };
+
+            const listenToPinballDraw = () => {
+                const { doc } = window.firebaseMethods;
+                const onSnapshot = trackedOnSnapshot;
+                onSnapshot(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'settings', 'pinball'), (docSnap) => {
+                    setPinballDraw(docSnap.exists() ? docSnap.data() : null);
+                });
+            };
+
+            const listenToPinballRoster = () => {
+                const { doc } = window.firebaseMethods;
+                const onSnapshot = trackedOnSnapshot;
+                onSnapshot(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'settings', 'pinballRoster'), (docSnap) => {
+                    setPinballRoster(docSnap.exists() ? docSnap.data() : null);
                 });
             };
 
@@ -1988,16 +2220,27 @@
                     await updateDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'study_records', recordId), { status: action });
 
                     if (action === "approved") {
-                        const userRef = doc(window.db, 'artifacts', window.appId, 'public', 'data', 'users', targetUid);
-                        const userSnap = await getDoc(userRef);
-                        if (userSnap.exists()) {
-                            const currentTotal = userSnap.data().totalStudyMins || 0;
-                            await updateDoc(userRef, { totalStudyMins: currentTotal + mins });
+                        // 누적 시간 갱신이 실패해도 명단은 반드시 다시 올려야 하므로
+                        // 여기서 따로 잡아 아래 흘름을 끊지 않는다.
+                        try {
+                            const userRef = doc(window.db, 'artifacts', window.appId, 'public', 'data', 'users', targetUid);
+                            const userSnap = await getDoc(userRef);
+                            if (userSnap.exists()) {
+                                const currentTotal = userSnap.data().totalStudyMins || 0;
+                                await updateDoc(userRef, { totalStudyMins: currentTotal + mins });
+                            }
+                            showToast("해당 학생의 학습 기록을 공식 승인했습니다!");
+                        } catch (e2) {
+                            triggerAlert('기록은 승인됐지만 누적 시간을 더하지 못했습니다.\n계정 관리 창에서 시간을 확인해 주세요.');
                         }
-                        showToast("해당 학생의 학습 기록을 공식 승인했습니다!");
                     } else {
                         showToast("사진 불충분으로 기록을 반려 처리했습니다.");
                     }
+
+                    // 응모 명단을 다시 올린다. 구독 반영을 기다리지 않도록
+                    // 방금 바꾼 상태를 직접 반영한 사본으로 계산한다.
+                    await publishRoster(null, (studyRecords || []).map(
+                        r => (r && r.id === recordId) ? { ...r, status: action } : r));
                 } catch(e) { console.error(e); }
             };
 
@@ -2201,6 +2444,56 @@
                 await adminUpdateUser(targetUid, { position: newPosition, rank: getRankFromPosition(newPosition) }, "변경 완료");
             };
 
+            const handlePinballSave = async (e) => {
+                e.preventDefault();
+                if ((user?.rank || 1) < 3 || !window.firebaseMethods) return;
+                setPinballBusy(true);
+                try {
+                    const { doc, setDoc } = window.firebaseMethods;
+                    await setDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'settings', 'config'),
+                                 { dday: ddaySettings, notice: noticeText, pinball: editPinball }, { merge: true });
+                    setPinballSettings(editPinball);
+                    // 기간이나 기준 시간이 바뀌면 응모권 수도 달라지므로 명단을 다시 계산한다.
+                    await publishRoster(editPinball);
+                    showToast('핀볼 설정을 저장했습니다.');
+                } catch (err) { triggerAlert('저장에 실패했습니다. 권한을 확인해 주세요.'); }
+                setPinballBusy(false);
+            };
+
+            /* 추첨. 응모권 수만큼 이름이 들어간 통에서 하나를 뽑고,
+               결과와 씨앗을 서버에 적어 모두가 같은 화면을 보게 한다. */
+            const handlePinballDraw = () => {
+                if ((user?.rank || 1) < 3 || !window.firebaseMethods) return;
+                if (pinballTotalTickets === 0) return triggerAlert('아직 응모한 학생이 없습니다.');
+                triggerConfirm(`응모권 ${pinballTotalTickets}장 중에서 한 명을 뽑습니다. 진행할까요?`, async () => {
+                    const pool = pinballEntrants.flatMap(e => Array.from({ length: e.tickets }, () => e));
+                    const pick = pool[Math.floor(Math.random() * pool.length)];
+                    setPinballBusy(true);
+                    try {
+                        const { doc, setDoc } = window.firebaseMethods;
+                        await setDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'settings', 'pinball'), {
+                            seed: Math.floor(Math.random() * 2147483647),
+                            winnerUid: pick.uid, winnerName: pick.name, winnerGrade: pick.grade,
+                            totalTickets: pinballTotalTickets, entrants: pinballEntrants.length,
+                            prize: pinballSettings.prize || '', drawnAt: Date.now()
+                        });
+                        showToast(`${pick.name} 학생이 당첨되었습니다!`);
+                    } catch (err) { triggerAlert('추첨 결과를 저장하지 못했습니다.'); }
+                    setPinballBusy(false);
+                }, '핀볼 추첨');
+            };
+
+            const handlePinballReset = () => {
+                if ((user?.rank || 1) < 3 || !window.firebaseMethods) return;
+                triggerConfirm('추첨 결과를 지우고 다시 뽑을 수 있게 할까요?', async () => {
+                    try {
+                        const { doc, deleteDoc } = window.firebaseMethods;
+                        await deleteDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'settings', 'pinball'));
+                        showToast('추첨 결과를 지웠습니다.');
+                    } catch (err) { triggerAlert('삭제하지 못했습니다.'); }
+                });
+            };
+
             const handleAdminSettingsSave = async (e) => {
                 e.preventDefault();
                 setDdaySettings(editDday);
@@ -2240,6 +2533,90 @@
                  (q.content || "").toLowerCase().includes(searchQuery.toLowerCase()))
             );
 
+            /* «공부 시간 데이터» 창용. 관리자가 고른 기간만 잘라 합산한다.
+               승인 기록이 있어야 하므로 임원(rank 2) 이상에서만 값이 나온다. */
+            const approvedMinsIn = (uid, startMs, endMs) =>
+                (studyRecords || [])
+                    .filter(r => r && r.status === 'approved' && r.userUid === uid
+                              && (!startMs || (r.timestamp || 0) >= startMs)
+                              && (!endMs   || (r.timestamp || 0) <= endMs))
+                    .reduce((sum, r) => sum + (r.durationMins || 0), 0);
+
+            /* 명단을 계산한다. 승인 기록이 있어야 하므로 학습부(rank 3) 이상에서만 쓸 수 있다.
+               settings 는 저장 직후처럼 아직 상태에 반영되지 않은 값을 넘길 때 쓰고,
+               records 는 승인·삭제 직후 서버 응답을 기다리지 않고 계산할 때 쓴다. */
+            const computeEntrants = (settings, records) => {
+                const cfg = settings || pinballSettings;
+                const recs = records || studyRecords || [];
+                const from = cfg.startDate ? new Date(cfg.startDate + 'T00:00:00').getTime() : null;
+                const to   = cfg.endDate   ? new Date(cfg.endDate   + 'T23:59:59').getTime() : null;
+                const minsOf = (uid) => recs
+                    .filter(r => r && r.status === 'approved' && r.userUid === uid
+                              && (!from || (r.timestamp || 0) >= from)
+                              && (!to   || (r.timestamp || 0) <= to))
+                    .reduce((sum, r) => sum + (r.durationMins || 0), 0);
+                return (usersList || [])
+                    .filter(u => u && u.status === 'active')
+                    .map(u => {
+                        const mins = minsOf(u.id);
+                        return { uid: u.id, name: u.name || '', grade: u.grade || '', petId: u.petId || null, mins,
+                                 tickets: pinballTickets(mins, cfg.baseHours, cfg.stepHours) };
+                    })
+                    .filter(e => e.tickets > 0)
+                    .sort((a, b) => b.tickets - a.tickets || b.mins - a.mins);
+            };
+
+            /* 계산한 명단을 서버에 올린다. 학생은 이 문서 하나만 읽으면 되므로
+               승인 기록 수천 건을 매번 내려받지 않아도 되고, 남의 인증 시각도 노출되지 않는다. */
+            const publishRoster = async (settings, records) => {
+                if ((user?.rank || 1) < 3 || !window.firebaseMethods || isLocalMode) return;
+                const cfg = settings || pinballSettings;
+                try {
+                    const { doc, setDoc } = window.firebaseMethods;
+                    await setDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'settings', 'pinballRoster'), {
+                        entrants: computeEntrants(cfg, records),
+                        startDate: cfg.startDate || '', endDate: cfg.endDate || '',
+                        baseHours: cfg.baseHours ?? 30, stepHours: cfg.stepHours ?? 10,
+                        updatedAt: Date.now(), updatedBy: user?.name || ''
+                    });
+                    return true;
+                } catch (err) { return false; }
+            };
+
+            const handleRosterRefresh = async () => {
+                if ((user?.rank || 1) < 3) return;
+                setRosterBusy(true);
+                const ok = await publishRoster();
+                setRosterBusy(false);
+                if (ok) showToast('응모 명단을 새로 계산했습니다.');
+                else triggerAlert('명단을 올리지 못했습니다. 권한과 네트워크를 확인해 주세요.');
+            };
+
+            // 화면에 그리는 명단은 등급과 무관하게 항상 서버에 올라간 것을 쓴다.
+            // 관리자와 학생이 서로 다른 숫자를 보는 일이 없어야 하기 때문이다.
+            const pinballEntrants = (pinballRoster && Array.isArray(pinballRoster.entrants))
+                ? pinballRoster.entrants : [];
+
+            // 저장된 명단이 지금 설정과 다른 기간으로 계산된 것이면 관리자에게 알린다.
+            const rosterStale = !!(pinballRoster && pinballSettings && (
+                (pinballRoster.startDate || '') !== (pinballSettings.startDate || '') ||
+                (pinballRoster.endDate   || '') !== (pinballSettings.endDate   || '') ||
+                (pinballRoster.baseHours ?? 30) !== (pinballSettings.baseHours ?? 30) ||
+                (pinballRoster.stepHours ?? 10) !== (pinballSettings.stepHours ?? 10)));
+
+            const pinballTotalTickets = pinballEntrants.reduce((a, e) => a + e.tickets, 0);
+
+            // 공 하나 = 응모권 하나. 당첨자 공만 표시가 다르다.
+            const pinballBalls = pinballEntrants.flatMap(e =>
+                Array.from({ length: e.tickets }, () => ({
+                    color: PETS[petIndexOf(e.uid, e.petId)].fill,
+                    winner: !!(pinballDraw && pinballDraw.winnerUid === e.uid)
+                })));
+
+            const myRosterEntry    = user ? pinballEntrants.find(e => e.uid === user.uid) : null;
+            const myPinballMins    = myRosterEntry ? myRosterEntry.mins : 0;
+            const myPinballTickets = myRosterEntry ? myRosterEntry.tickets : 0;
+
             const leaderboardTop5 = [...(usersList || [])]
                 .filter(u => u && (u.totalStudyMins || 0) > 0)
                 .sort((a, b) => (b.totalStudyMins || 0) - (a.totalStudyMins || 0))
@@ -2252,6 +2629,9 @@
             const suspendedUsersList = (usersList || []).filter(u => u && u.status === 'suspended');
 
             const getDisplayUserList = () => {
+                const rank = user?.rank || 1;
+                // 정상 계정·캐릭터 목록은 최고 관리자만 볼 수 있다
+                if ((adminUserSubTab === 'active' || adminUserSubTab === 'pets') && rank !== 4) return [];
                 const targetList = adminUserSubTab === "pending"   ? pendingUsersList
                                  : adminUserSubTab === "suspended" ? suspendedUsersList
                                  : adminUserSubTab === "pets"      ? (usersList || [])
@@ -2564,13 +2944,138 @@
                 { key: 'pet',       label: '내 캐릭터',     short: '캐릭터', icon: 'fa-paw' },
                 { key: 'studyRoom', label: '온라인 자습실', short: '자습실', icon: 'fa-stopwatch' },
                 { key: 'materials', label: '학습 자료실',   short: '자료실', icon: 'fa-folder-open' },
-                { key: 'qna',       label: '질문 / 요청',   short: '질문',   icon: 'fa-circle-question' }
+                { key: 'qna',       label: '질문 / 요청',   short: '질문',   icon: 'fa-circle-question' },
+                { key: 'pinball',   label: '핀볼 추첨',     short: '핀볼',   icon: 'fa-trophy' }
             ];
             const tabIndex = Math.max(0, MAIN_TABS.findIndex(t => t.key === activeMainTab));
 
             const ringR = 84;
             const ringC = 2 * Math.PI * ringR;
             const ringProgress = (elapsedSecs % 3600) / 3600;
+
+            /* ── 초기화 (최고 관리자 전용) ──────────────────────────
+               시험 주기마다 기록을 비우기 위한 도구.
+               되돌릴 수 없으므로 지울 건수를 먼저 보여주고 확인을 받는다. */
+            const RESET_CHUNK = 400;   // Firestore 일괄 쓰기 한 번에 담는 최대치
+
+            const resetCutMs = (dateStr) => dateStr ? new Date(dateStr + 'T23:59:59').getTime() : null;
+
+            const hoursResetTargets = (() => {
+                const cut = resetCutMs(resetHoursDate);
+                if (!cut) return [];
+                return (studyRecords || []).filter(r => r && (r.timestamp || 0) <= cut);
+            })();
+
+            const matsResetTargets = (() => {
+                if (!resetMatsDate) return [];
+                return (materials || []).filter(m => m && (m.date || '9999') <= resetMatsDate);
+            })();
+
+            // 문서를 일괄 삭제한다. 한 건씩 지우면 수천 건에서 한참 걸린다.
+            const bulkDelete = async (collectionName, ids, onProgress) => {
+                const { doc, deleteDoc, writeBatch } = window.firebaseMethods;
+                const path = (id) => doc(window.db, 'artifacts', window.appId, 'public', 'data', collectionName, id);
+                let done = 0;
+                for (let i = 0; i < ids.length; i += RESET_CHUNK) {
+                    const slice = ids.slice(i, i + RESET_CHUNK);
+                    if (writeBatch) {
+                        const batch = writeBatch(window.db);
+                        slice.forEach(id => batch.delete(path(id)));
+                        await batch.commit();
+                    } else {
+                        await Promise.all(slice.map(id => deleteDoc(path(id)).catch(() => {})));
+                    }
+                    done += slice.length;
+                    onProgress(Math.round((done / ids.length) * 100));
+                }
+            };
+
+            const doResetHours = async (targets, alsoTotals) => {
+                setResetBusy(true); setResetProgress(1);
+                try {
+                    await bulkDelete('study_records', targets.map(r => r.id), setResetProgress);
+
+                    let failed = 0;
+                    if (alsoTotals) {
+                        const { doc, updateDoc } = window.firebaseMethods;
+                        const list = (usersList || []).filter(u => u && (u.totalStudyMins || 0) > 0);
+                        for (let i = 0; i < list.length; i += 20) {
+                            await Promise.all(list.slice(i, i + 20).map(u =>
+                                updateDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'users', u.id),
+                                          { totalStudyMins: 0 }).catch(() => { failed++; })));
+                        }
+                    }
+
+                    // 지운 기록만큼 응모권도 줄어야 하므로 명단을 다시 올린다.
+                    const goneIds = new Set(targets.map(r => r.id));
+                    await publishRoster(null, (studyRecords || []).filter(r => r && !goneIds.has(r.id)));
+
+                    setResetHoursDate(''); setResetHoursTotals(false);
+                    // 누적 시간은 서버가 최고 관리자 계정에만 허용한다.
+                    // 막혔는데 성공했다고 알리면 안 되므로 실패 건수를 그대로 알린다.
+                    if (failed > 0) {
+                        triggerAlert(
+                            `기록 ${targets.length}건은 지웠지만, 학생 ${failed}명의 누적 시간은 서버가 막았습니다.\n\n` +
+                            '누적 시간 초기화는 최고 관리자 계정으로만 됩니다.\n그 계정으로 다시 시도해 주세요.',
+                            '일부만 처리되었습니다');
+                    } else {
+                        showToast(`기록 ${targets.length}건을 정리했습니다.`);
+                    }
+                } catch (err) {
+                    triggerAlert('정리 중 오류가 났습니다. 일부만 지워졌을 수 있으니 건수를 다시 확인해 주세요.');
+                }
+                setResetBusy(false); setResetProgress(0);
+            };
+
+            const handleResetHours = () => {
+                if (currentUserRank !== 4) return triggerAlert('최고 관리자만 할 수 있습니다.');
+                if (!resetHoursDate) return triggerAlert('기준 날짜를 골라주세요.');
+                if (hoursResetTargets.length === 0) return triggerAlert('그 날짜까지 지울 기록이 없습니다.');
+                triggerConfirm(
+                    `${resetHoursDate}까지의 승인 기록 ${hoursResetTargets.length}건을 영구 삭제합니다.\n\n` +
+                    (resetHoursTotals
+                        ? '학생 전원의 누적 시간도 0으로 되돌립니다.\n캐릭터가 모두 «알» 단계로 돌아갑니다.'
+                        : '학생 누적 시간과 캐릭터는 그대로 둡니다.') +
+                    '\n\n되돌릴 수 없습니다.',
+                    () => doResetHours(hoursResetTargets, resetHoursTotals),
+                    '공부시간 초기화');
+            };
+
+            const doResetMaterials = async (targets) => {
+                setResetBusy(true); setResetProgress(1);
+                try {
+                    // 저장소 파일부터 지운다. 문서만 지우면 파일이 남아 요금이 계속 나간다.
+                    const { ref, deleteObject } = window.firebaseMethods;
+                    const files = targets.flatMap(m =>
+                        (m.attachments || [{ fileName: m.fileName }])
+                            .filter(a => a && a.fileName)
+                            .map(a => `materials/${m.id}_${a.fileName}`));
+                    for (let i = 0; i < files.length; i += 20) {
+                        await Promise.all(files.slice(i, i + 20).map(p =>
+                            deleteObject(ref(window.storage, p)).catch(() => {})));
+                        setResetProgress(Math.round((i / Math.max(1, files.length)) * 50));
+                    }
+
+                    await bulkDelete('materials', targets.map(m => m.id), (p) => setResetProgress(50 + p / 2));
+                    showToast(`자료 ${targets.length}건과 첨부파일을 정리했습니다.`);
+                    setResetMatsDate('');
+                } catch (err) {
+                    triggerAlert('정리 중 오류가 났습니다. 일부만 지워졌을 수 있습니다.');
+                }
+                setResetBusy(false); setResetProgress(0);
+            };
+
+            const handleResetMaterials = () => {
+                if (currentUserRank !== 4) return triggerAlert('최고 관리자만 할 수 있습니다.');
+                if (!resetMatsDate) return triggerAlert('기준 날짜를 골라주세요.');
+                if (matsResetTargets.length === 0) return triggerAlert('그 날짜까지 지울 자료가 없습니다.');
+                const fileCount = matsResetTargets.reduce((a, m) => a + ((m.attachments || [1]).length), 0);
+                triggerConfirm(
+                    `${resetMatsDate}까지 올라온 자료 ${matsResetTargets.length}건과 첨부파일 ${fileCount}개를 영구 삭제합니다.\n\n` +
+                    '학생들이 올린 자료가 사라지고 되돌릴 수 없습니다.\n정말 진행할까요?',
+                    () => doResetMaterials(matsResetTargets),
+                    '자료 초기화');
+            };
 
             const hh = Math.floor(elapsedSecs / 3600);
             const mm = Math.floor((elapsedSecs % 3600) / 60);
@@ -2769,6 +3274,80 @@
                                             <p className="text-[11px] mt-5 leading-relaxed" style={{ color: 'var(--txt-faint)' }}>
                                                 흐릿한 단계는 아직 오지 않은 모습입니다. 어떤 친구가 나올지는 계정마다 정해져 있어요.
                                             </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })()}
+
+                        {/* ── 핀볼 추첨 ──────────────────── */}
+                        {activeMainTab === 'pinball' && (() => {
+                            const base = pinballSettings.baseHours || 30;
+                            const step = pinballSettings.stepHours || 10;
+                            const nextAt = myPinballTickets === 0
+                                ? base * 60 - myPinballMins
+                                : (base * 60 + myPinballTickets * step * 60) - myPinballMins;
+                            const running = pinballSettings.startDate && pinballSettings.endDate;
+                            return (
+                                <div className="grid grid-cols-1 lg:grid-cols-[1fr_.85fr] gap-6">
+                                    <div className="glass topline rounded-[28px] p-7 reveal d1">
+                                        <SectionTitle eyebrow="Live" title="핀볼 판"
+                                            right={<span className="tag tag-brand font-mono">응모권 {pinballTotalTickets}장</span>} />
+                                        {pinballTotalTickets > 0 ? (
+                                            <PinballBoard tickets={pinballBalls} draw={pinballDraw}
+                                                          winnerName={pinballDraw && pinballDraw.winnerName} />
+                                        ) : (
+                                            <EmptyState icon="fa-trophy" title="아직 응모한 학생이 없어요"
+                                                        desc={`${base}시간을 채우면 첫 응모권이 들어갑니다.`} />
+                                        )}
+                                        {pinballDraw && pinballDraw.drawnAt && (
+                                            <p className="text-[11px] mt-4 text-center font-mono" style={{ color: 'var(--txt-faint)' }}>
+                                                {new Date(pinballDraw.drawnAt).toLocaleString('ko-KR')} 추첨 · 응모권 {pinballDraw.totalTickets}장
+                                            </p>
+                                        )}
+                                    </div>
+
+                                    <div className="space-y-6">
+                                        <div className="glass rounded-[28px] p-7 reveal d2">
+                                            <SectionTitle eyebrow="My Tickets" title="내 응모권" />
+                                            <div className="flex items-end gap-3 mb-4">
+                                                <span className="font-mono text-4xl font-extrabold" style={{ color: 'var(--lime-ink)' }}>{myPinballTickets}</span>
+                                                <span className="text-sm mb-1.5" style={{ color: 'var(--txt-dim)' }}>장</span>
+                                            </div>
+                                            <div className="pet-track" style={{ height: 10 }}>
+                                                <div className="pet-fill" style={{ width: `${Math.min(100, Math.round((myPinballMins / (base*60)) * 100))}%` }}></div>
+                                            </div>
+                                            <p className="text-[11px] mt-3 leading-relaxed" style={{ color: 'var(--txt-faint)' }}>
+                                                기간 내 <span className="font-mono" style={{ color: 'var(--txt-dim)' }}>{fmtHM(myPinballMins)}</span> 인정됐어요.
+                                                {nextAt > 0 && <> <span className="font-mono" style={{ color: 'var(--lime-ink)' }}>{fmtHM(nextAt)}</span> 더 하면 한 장 더 들어갑니다.</>}
+                                            </p>
+                                            <div className="divider my-5"></div>
+                                            <p className="text-[11px] leading-relaxed" style={{ color: 'var(--txt-faint)' }}>
+                                                <b style={{ color: 'var(--txt-dim)' }}>{base}시간</b>을 채우면 이름이 한 번 들어가고,
+                                                그 뒤로 <b style={{ color: 'var(--txt-dim)' }}>{step}시간</b>마다 한 번씩 더 들어갑니다.
+                                                {running && <><br />기간 <span className="font-mono">{pinballSettings.startDate} ~ {pinballSettings.endDate}</span></>}
+                                                {pinballSettings.prize && <><br />상품 · <b style={{ color: 'var(--gold)' }}>{pinballSettings.prize}</b></>}
+                                            </p>
+                                        </div>
+
+                                        <div className="glass rounded-[28px] p-7 reveal d3">
+                                            <SectionTitle eyebrow="Entrants" title="응모 현황"
+                                                right={<span className="tag tag-neutral font-mono">{pinballEntrants.length}명</span>} />
+                                            <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+                                                {pinballEntrants.map((e, i) => (
+                                                    <div key={e.uid} className="flex items-center gap-2.5 text-xs">
+                                                        <span className="font-mono text-[10px] w-5 shrink-0" style={{ color: 'var(--txt-faint)' }}>{i+1}</span>
+                                                        <span className="shrink-0" style={{ lineHeight: 0 }}>
+                                                            <Pet uid={e.uid} petId={e.petId} mins={0} size={26} ground={false} animate={false} />
+                                                        </span>
+                                                        <span className="font-bold truncate flex-1">{e.name}</span>
+                                                        <span className="tag tag-brand font-mono shrink-0">{e.tickets}장</span>
+                                                    </div>
+                                                ))}
+                                                {pinballEntrants.length === 0 && (
+                                                    <p className="text-[11px] py-4 text-center" style={{ color: 'var(--txt-faint)' }}>첫 번째 응모자가 되어보세요.</p>
+                                                )}
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -3384,8 +3963,25 @@
                                     </div>
 
                                     <div className="flex gap-1.5 text-[11px] font-bold overflow-x-auto pb-0.5">
-                                        <button onClick={() => setAdminTab("config")} className={`chip ${adminTab === 'config' ? 'on' : ''}`}>📢 공지 & 일정</button>
-                                        <button onClick={() => setAdminTab("users")}  className={`chip ${adminTab === 'users'  ? 'on' : ''}`}>👥 계정 관리</button>
+                                        <button onClick={() => setAdminTab("config")} className={`chip ${adminTab === 'config' ? 'on' : ''} whitespace-nowrap`}>📢 공지 & 일정</button>
+                                        <button onClick={() => setAdminTab("hours")}  className={`chip ${adminTab === 'hours'  ? 'on' : ''} whitespace-nowrap`}>⏱ 공부 시간 데이터</button>
+                                        {currentUserRank >= 3 && (
+                                            <button onClick={() => { setAdminTab("users"); setAdminUserSubTab(currentUserRank === 4 ? "active" : "pending"); }}
+                                                    className={`chip ${adminTab === 'users' ? 'on' : ''} whitespace-nowrap`}>👥 계정 관리</button>
+                                        )}
+                                        {currentUserRank === 4 && <>
+                                            <button onClick={() => setAdminTab("resetHours")} className={`chip ${adminTab === 'resetHours' ? 'on-alt' : ''} whitespace-nowrap`}>
+                                                🧹 시간 초기화
+                                            </button>
+                                            <button onClick={() => setAdminTab("resetMats")} className={`chip ${adminTab === 'resetMats' ? 'on-alt' : ''} whitespace-nowrap`}>
+                                                🗂 자료 초기화
+                                            </button>
+                                        </>}
+                                        {currentUserRank >= 3 && (
+                                            <button onClick={() => setAdminTab("pinball")} className={`chip ${adminTab === 'pinball' ? 'on-alt' : ''} whitespace-nowrap`}>
+                                                🎱 핀볼
+                                            </button>
+                                        )}
                                         {currentUserRank >= 3 && (
                                             <button onClick={() => setAdminTab("study")} className={`chip ${adminTab === 'study' ? 'on' : ''} whitespace-nowrap`}>
                                                 <i className="fa-solid fa-check-double mr-1"></i>학습 인증 승인 ({(studyRecords || []).filter(r => r && r.status === 'pending').length})
@@ -3420,17 +4016,79 @@
                                     </form>
                                 )}
 
-                                {adminTab === "users" && (
+                                {/* ── 공부 시간 데이터 (rank 2 이상) ── */}
+                                {adminTab === "hours" && (() => {
+                                    const pb = pinballSettings || {};
+                                    const sMs = pb.startDate ? new Date(pb.startDate + 'T00:00:00').getTime() : null;
+                                    const eMs = pb.endDate   ? new Date(pb.endDate   + 'T23:59:59').getTime() : null;
+                                    const q = (userSearchQuery || '').trim();
+                                    const rows = (usersList || [])
+                                        .filter(u => u && (!q || (u.name||'').includes(q) || (u.grade||'').includes(q)))
+                                        .map(u => ({ u, total: u.totalStudyMins || 0, span: approvedMinsIn(u.id, sMs, eMs) }))
+                                        .sort((a, b) => b.span - a.span || b.total - a.total);
+                                    const sumTotal = rows.reduce((a, r) => a + r.total, 0);
+                                    const sumSpan  = rows.reduce((a, r) => a + r.span, 0);
+                                    const active   = rows.filter(r => r.span > 0).length;
+                                    return (
+                                        <div className="p-5 space-y-4 reveal">
+                                            <div className="grid grid-cols-3 gap-2.5">
+                                                {[['참여 학생', `${active}명`, 'var(--lime-ink)'],
+                                                  ['기간 내 합계', fmtHM(sumSpan), 'var(--cyan-ink)'],
+                                                  ['전체 누적', fmtHM(sumTotal), 'var(--txt)']].map(([k, v, c]) => (
+                                                    <div key={k} className="glass rounded-2xl p-3.5 text-center">
+                                                        <div className="eyebrow text-[8px] mb-1.5">{k}</div>
+                                                        <div className="font-mono text-sm font-extrabold" style={{ color: c }}>{v}</div>
+                                                    </div>
+                                                ))}
+                                            </div>
+
+                                            <p className="text-[11px] leading-relaxed" style={{ color: 'var(--txt-faint)' }}>
+                                                {pb.startDate && pb.endDate
+                                                    ? <>기간 <span className="font-mono">{pb.startDate} ~ {pb.endDate}</span> 안에 학습부가 승인한 시간만 «기간 내»로 셉니다.</>
+                                                    : '이벤트 기간이 설정되지 않아 «기간 내»는 전체 승인 기록으로 계산됩니다.'}
+                                            </p>
+
+                                            <div className="relative">
+                                                <span className="absolute inset-y-0 left-0 flex items-center pl-3" style={{ color: 'var(--txt-faint)' }}><i className="fa-solid fa-magnifying-glass text-[10px]"></i></span>
+                                                <input type="text" placeholder="이름 또는 학년으로 검색" value={userSearchQuery || ''} onChange={(e) => setUserSearchQuery(e.target.value)} className="fld fld-sm pl-9" />
+                                            </div>
+
+                                            <div className="max-h-[46vh] overflow-y-auto rounded-2xl divide-y" style={{ border: '1px solid var(--line)', borderColor: 'var(--line)' }}>
+                                                {rows.map(({ u, total, span }, i) => (
+                                                    <div key={u.id} className="row p-3 flex items-center justify-between gap-3 text-xs" style={{ borderColor: 'var(--line)' }}>
+                                                        <div className="flex items-center gap-2.5 min-w-0">
+                                                            <span className="font-mono text-[10px] w-5 shrink-0" style={{ color: 'var(--txt-faint)' }}>{i + 1}</span>
+                                                            <span className="font-bold truncate">{u.name}</span>
+                                                            <span className="tag tag-neutral shrink-0">{u.grade}</span>
+                                                        </div>
+                                                        <div className="flex items-center gap-3 shrink-0 font-mono text-[11px]">
+                                                            <span style={{ color: 'var(--lime-ink)' }} title="기간 내 승인 시간">{fmtHM(span)}</span>
+                                                            <span style={{ color: 'var(--txt-faint)' }} title="전체 누적">{fmtHM(total)}</span>
+                                                        </div>
+                                                    </div>
+                                                ))}
+                                                {rows.length === 0 && <EmptyState icon="fa-chart-simple" title="표시할 학생이 없습니다" />}
+                                            </div>
+                                            <p className="text-[10px]" style={{ color: 'var(--txt-faint)' }}>
+                                                왼쪽 초록 숫자가 기간 내 시간, 오른쪽 회색이 전체 누적입니다.
+                                            </p>
+                                        </div>
+                                    );
+                                })()}
+
+                                {adminTab === "users" && currentUserRank >= 3 && (
                                     <div className="p-5 space-y-4 reveal">
                                         <div className="flex gap-1.5 overflow-x-auto pb-1">
                                             <button onClick={() => setAdminUserSubTab("pending")} className={`chip ${adminUserSubTab === 'pending' ? 'on-alt' : ''} whitespace-nowrap`}>
                                                 승인 대기 ({pendingUsersList.length})
                                             </button>
-                                            <button onClick={() => setAdminUserSubTab("active")} className={`chip ${adminUserSubTab === 'active' ? 'on' : ''} whitespace-nowrap`}>정상 계정 ({activeUsersList.length})</button>
                                             <button onClick={() => setAdminUserSubTab("suspended")} className={`chip ${adminUserSubTab === 'suspended' ? 'on' : ''} whitespace-nowrap`}>정지 보관함 ({suspendedUsersList.length})</button>
-                                            <button onClick={() => setAdminUserSubTab("pets")} className={`chip ${adminUserSubTab === 'pets' ? 'on-alt' : ''} whitespace-nowrap`}>
-                                                <i className="fa-solid fa-paw mr-1"></i>캐릭터
-                                            </button>
+                                            {currentUserRank === 4 && <>
+                                                <button onClick={() => setAdminUserSubTab("active")} className={`chip ${adminUserSubTab === 'active' ? 'on' : ''} whitespace-nowrap`}>정상 계정 ({activeUsersList.length})</button>
+                                                <button onClick={() => setAdminUserSubTab("pets")} className={`chip ${adminUserSubTab === 'pets' ? 'on-alt' : ''} whitespace-nowrap`}>
+                                                    <i className="fa-solid fa-paw mr-1"></i>캐릭터
+                                                </button>
+                                            </>}
                                         </div>
 
                                         <div className="relative">
@@ -3501,6 +4159,238 @@
                                             ))}
                                             {filteredDisplayUsers.length === 0 && <EmptyState icon="fa-user-slash" title="검색 결과가 없습니다" />}
                                         </div>
+                                    </div>
+                                )}
+
+                                {adminTab === "pinball" && currentUserRank >= 3 && (
+                                    <form onSubmit={handlePinballSave} className="p-6 space-y-5 max-h-[70vh] overflow-y-auto reveal">
+                                        <div className="grid grid-cols-3 gap-2.5">
+                                            {[['응모 학생', `${pinballEntrants.length}명`], ['응모권', `${pinballTotalTickets}장`],
+                                              ['당첨자', pinballDraw && pinballDraw.winnerName ? pinballDraw.winnerName : '아직 없음']].map(([k, v]) => (
+                                                <div key={k} className="glass rounded-2xl p-3.5 text-center">
+                                                    <div className="eyebrow text-[8px] mb-1.5">{k}</div>
+                                                    <div className="font-mono text-sm font-extrabold">{v}</div>
+                                                </div>
+                                            ))}
+                                        </div>
+
+                                        {/* 학생은 이 명단만 읽는다. 승인할 때마다 자동으로 올라가지만,
+                                            어찌해 어긋나면 여기서 다시 계산할 수 있다. */}
+                                        <div className="glass rounded-2xl p-4 flex items-center justify-between gap-3"
+                                             style={rosterStale ? { borderColor: 'color-mix(in srgb, var(--pink) 34%, transparent)' } : undefined}>
+                                            <div className="min-w-0">
+                                                <div className="eyebrow text-[9px] mb-1">응모 명단</div>
+                                                <p className="text-[11px] truncate" style={{ color: rosterStale ? 'var(--rose)' : 'var(--txt-faint)' }}>
+                                                    {rosterStale
+                                                        ? '설정이 바뀌었습니다. 다시 계산해 주세요.'
+                                                        : pinballRoster && pinballRoster.updatedAt
+                                                            ? `${new Date(pinballRoster.updatedAt).toLocaleString('ko-KR')} 기준`
+                                                            : '아직 올라간 명단이 없습니다'}
+                                                </p>
+                                            </div>
+                                            <button type="button" onClick={handleRosterRefresh} disabled={rosterBusy}
+                                                    className="btn btn-ghost px-3.5 py-2 rounded-xl text-[10px] font-bold shrink-0">
+                                                <i className="fa-solid fa-rotate mr-1.5"></i>{rosterBusy ? '계산 중...' : '명단 새로고침'}
+                                            </button>
+                                        </div>
+
+                                        <div className="grid sm:grid-cols-2 gap-3">
+                                            <div>
+                                                <label className="eyebrow text-[9px] block mb-2">시작일</label>
+                                                <input type="date" value={(editPinball || {}).startDate || ''}
+                                                       onChange={(e) => setEditPinball({ ...(editPinball || {}), startDate: e.target.value })}
+                                                       className="fld text-xs" />
+                                            </div>
+                                            <div>
+                                                <label className="eyebrow text-[9px] block mb-2">종료일</label>
+                                                <input type="date" value={(editPinball || {}).endDate || ''}
+                                                       onChange={(e) => setEditPinball({ ...(editPinball || {}), endDate: e.target.value })}
+                                                       className="fld text-xs" />
+                                            </div>
+                                        </div>
+
+                                        <div>
+                                            <label className="eyebrow text-[9px] block mb-2">상품</label>
+                                            <input type="text" placeholder="예: 문화상품권 3만원" value={(editPinball || {}).prize || ''}
+                                                   onChange={(e) => setEditPinball({ ...(editPinball || {}), prize: e.target.value })}
+                                                   className="fld text-xs" />
+                                        </div>
+
+                                        <div className="grid sm:grid-cols-2 gap-3">
+                                            <div>
+                                                <label className="eyebrow text-[9px] block mb-2">첫 응모권 (시간)</label>
+                                                <input type="number" min="1" max="200" value={(editPinball || {}).baseHours ?? 30}
+                                                       onChange={(e) => setEditPinball({ ...(editPinball || {}), baseHours: parseInt(e.target.value, 10) || 30 })}
+                                                       className="fld text-xs" />
+                                            </div>
+                                            <div>
+                                                <label className="eyebrow text-[9px] block mb-2">추가 단위 (시간)</label>
+                                                <input type="number" min="1" max="100" value={(editPinball || {}).stepHours ?? 10}
+                                                       onChange={(e) => setEditPinball({ ...(editPinball || {}), stepHours: parseInt(e.target.value, 10) || 10 })}
+                                                       className="fld text-xs" />
+                                            </div>
+                                        </div>
+                                        <p className="text-[10px] leading-relaxed" style={{ color: 'var(--txt-faint)' }}>
+                                            {(editPinball || {}).baseHours ?? 30}시간을 채우면 1장, 그 뒤 {(editPinball || {}).stepHours ?? 10}시간마다 1장씩 늘어납니다.
+                                            학습부가 승인한 시간만 셉니다.
+                                        </p>
+
+                                        <button type="submit" disabled={pinballBusy} className="btn btn-primary w-full font-bold py-3.5 rounded-2xl text-sm">
+                                            {pinballBusy ? '저장 중...' : '설정 저장'}
+                                        </button>
+
+                                        <div className="divider"></div>
+
+                                        {pinballDraw && pinballDraw.drawnAt ? (
+                                            <div className="glass rounded-2xl p-4 text-center space-y-3">
+                                                <div className="eyebrow text-[9px]">추첨 완료</div>
+                                                <div className="text-lg font-extrabold" style={{ color: 'var(--lime-ink)' }}>
+                                                    {pinballDraw.winnerName}
+                                                    <span className="text-xs font-normal ml-2" style={{ color: 'var(--txt-faint)' }}>{pinballDraw.winnerGrade}</span>
+                                                </div>
+                                                <p className="text-[11px] font-mono" style={{ color: 'var(--txt-faint)' }}>
+                                                    {new Date(pinballDraw.drawnAt).toLocaleString('ko-KR')} · 응모권 {pinballDraw.totalTickets}장
+                                                </p>
+                                                <button type="button" onClick={handlePinballReset}
+                                                        className="btn btn-ghost w-full py-2.5 rounded-xl text-xs font-bold" style={{ color: 'var(--rose)' }}>
+                                                    결과 지우고 다시 뽑기
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <button type="button" onClick={handlePinballDraw} disabled={pinballBusy || pinballTotalTickets === 0}
+                                                    className="btn btn-pink w-full font-extrabold py-4 rounded-2xl text-sm">
+                                                🎱 추첨하기 ({pinballTotalTickets}장)
+                                            </button>
+                                        )}
+                                        <p className="text-[10px] leading-relaxed" style={{ color: 'var(--txt-faint)' }}>
+                                            추첨하면 결과가 서버에 저장되어, 모든 학생 화면에서 같은 공 궤적과 같은 당첨자가 보입니다.
+                                        </p>
+                                    </form>
+                                )}
+
+                                {/* ── 공부시간 초기화 (최고 관리자 전용) ── */}
+                                {adminTab === "resetHours" && currentUserRank === 4 && (
+                                    <div className="p-6 space-y-5 max-h-[70vh] overflow-y-auto reveal">
+                                        <div className="glass rounded-2xl p-4" style={{ borderColor: 'color-mix(in srgb, var(--pink) 34%, transparent)' }}>
+                                            <div className="flex items-center gap-2.5 mb-2">
+                                                <i className="fa-solid fa-triangle-exclamation text-sm" style={{ color: 'var(--rose)' }}></i>
+                                                <b className="text-xs">되돌릴 수 없습니다</b>
+                                            </div>
+                                            <p className="text-[11px] leading-relaxed" style={{ color: 'var(--txt-dim)' }}>
+                                                지운 승인 기록은 복구할 수 없습니다. 핀볼 응모권과 «공부 시간 데이터»의 기간 내 시간도 함께 0이 됩니다.
+                                                <b style={{ color: 'var(--txt)' }}> 핀볼 상품을 준 뒤에</b> 실행하세요.
+                                            </p>
+                                        </div>
+
+                                        <div>
+                                            <label className="eyebrow text-[9px] block mb-2">이 날짜까지의 기록을 지웁니다</label>
+                                            <input type="date" value={resetHoursDate} onChange={(e) => setResetHoursDate(e.target.value)}
+                                                   className="fld text-xs" disabled={resetBusy} />
+                                        </div>
+
+                                        <div className="glass rounded-2xl p-4 text-center">
+                                            <div className="eyebrow text-[9px] mb-2">지워질 기록</div>
+                                            <div className="font-mono text-3xl font-extrabold"
+                                                 style={{ color: hoursResetTargets.length ? 'var(--rose)' : 'var(--txt-faint)' }}>
+                                                {hoursResetTargets.length}
+                                            </div>
+                                            <p className="text-[11px] mt-2" style={{ color: 'var(--txt-faint)' }}>
+                                                {resetHoursDate ? `전체 ${(studyRecords || []).length}건 중` : '날짜를 고르면 건수가 나옵니다'}
+                                            </p>
+                                        </div>
+
+                                        <label className="glass rounded-2xl p-4 flex items-start gap-3 cursor-pointer">
+                                            <input type="checkbox" checked={resetHoursTotals} disabled={resetBusy}
+                                                   onChange={(e) => setResetHoursTotals(e.target.checked)}
+                                                   className="mt-0.5 shrink-0" style={{ accentColor: 'var(--pink)', width: 16, height: 16 }} />
+                                            <span>
+                                                <b className="text-xs block mb-1">학생 누적 시간도 0으로</b>
+                                                <span className="text-[11px] leading-relaxed" style={{ color: 'var(--txt-faint)' }}>
+                                                    명예의 전당이 새로 시작합니다. 대신 <b style={{ color: 'var(--rose)' }}>모든 캐릭터가 «알» 단계로 돌아갑니다.</b>
+                                                    <br />체크하지 않으면 캐릭터와 누적 시간은 그대로 두고 기록만 정리합니다.
+                                                </span>
+                                            </span>
+                                        </label>
+
+                                        {resetBusy && (
+                                            <div>
+                                                <div className="pet-track" style={{ height: 10 }}>
+                                                    <div className="pet-fill" style={{ width: `${resetProgress}%`, background: 'var(--pink)' }}></div>
+                                                </div>
+                                                <p className="text-[11px] mt-2 text-center font-mono" style={{ color: 'var(--txt-faint)' }}>정리 중 {resetProgress}%</p>
+                                            </div>
+                                        )}
+
+                                        <button type="button" onClick={handleResetHours}
+                                                disabled={resetBusy || hoursResetTargets.length === 0}
+                                                className="btn btn-pink w-full font-extrabold py-4 rounded-2xl text-sm">
+                                            {resetBusy ? '정리 중...' : `기록 ${hoursResetTargets.length}건 지우기`}
+                                        </button>
+                                    </div>
+                                )}
+
+                                {/* ── 자료 초기화 (최고 관리자 전용) ── */}
+                                {adminTab === "resetMats" && currentUserRank === 4 && (
+                                    <div className="p-6 space-y-5 max-h-[70vh] overflow-y-auto reveal">
+                                        <div className="glass rounded-2xl p-4" style={{ borderColor: 'color-mix(in srgb, var(--pink) 34%, transparent)' }}>
+                                            <div className="flex items-center gap-2.5 mb-2">
+                                                <i className="fa-solid fa-triangle-exclamation text-sm" style={{ color: 'var(--rose)' }}></i>
+                                                <b className="text-xs">학생들이 올린 자료가 사라집니다</b>
+                                            </div>
+                                            <p className="text-[11px] leading-relaxed" style={{ color: 'var(--txt-dim)' }}>
+                                                문서와 첨부파일을 함께 지웁니다. 파일까지 지워야 저장 요금이 멈춥니다.
+                                                꼭 필요한 자료는 <b style={{ color: 'var(--txt)' }}>먼저 내려받아 두세요.</b>
+                                            </p>
+                                        </div>
+
+                                        <div>
+                                            <label className="eyebrow text-[9px] block mb-2">이 날짜까지 올라온 자료를 지웁니다</label>
+                                            <input type="date" value={resetMatsDate} onChange={(e) => setResetMatsDate(e.target.value)}
+                                                   className="fld text-xs" disabled={resetBusy} />
+                                        </div>
+
+                                        <div className="glass rounded-2xl p-4 text-center">
+                                            <div className="eyebrow text-[9px] mb-2">지워질 자료</div>
+                                            <div className="font-mono text-3xl font-extrabold"
+                                                 style={{ color: matsResetTargets.length ? 'var(--rose)' : 'var(--txt-faint)' }}>
+                                                {matsResetTargets.length}
+                                            </div>
+                                            <p className="text-[11px] mt-2" style={{ color: 'var(--txt-faint)' }}>
+                                                {resetMatsDate
+                                                    ? `전체 ${(materials || []).length}건 중 · 첨부파일 ${matsResetTargets.reduce((a, m) => a + ((m.attachments || [1]).length), 0)}개`
+                                                    : '날짜를 고르면 건수가 나옵니다'}
+                                            </p>
+                                        </div>
+
+                                        {matsResetTargets.length > 0 && (
+                                            <div className="glass rounded-2xl p-3 max-h-40 overflow-y-auto space-y-1.5">
+                                                <div className="eyebrow text-[9px] mb-1.5">지워질 목록</div>
+                                                {matsResetTargets.slice(0, 40).map(m => (
+                                                    <div key={m.id} className="flex justify-between gap-2 text-[11px]">
+                                                        <span className="truncate" style={{ color: 'var(--txt-dim)' }}>{m.title}</span>
+                                                        <span className="font-mono shrink-0" style={{ color: 'var(--txt-faint)' }}>{m.date}</span>
+                                                    </div>
+                                                ))}
+                                                {matsResetTargets.length > 40 && (
+                                                    <p className="text-[10px] pt-1" style={{ color: 'var(--txt-faint)' }}>… 외 {matsResetTargets.length - 40}건</p>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        {resetBusy && (
+                                            <div>
+                                                <div className="pet-track" style={{ height: 10 }}>
+                                                    <div className="pet-fill" style={{ width: `${resetProgress}%`, background: 'var(--pink)' }}></div>
+                                                </div>
+                                                <p className="text-[11px] mt-2 text-center font-mono" style={{ color: 'var(--txt-faint)' }}>정리 중 {resetProgress}%</p>
+                                            </div>
+                                        )}
+
+                                        <button type="button" onClick={handleResetMaterials}
+                                                disabled={resetBusy || matsResetTargets.length === 0}
+                                                className="btn btn-pink w-full font-extrabold py-4 rounded-2xl text-sm">
+                                            {resetBusy ? '정리 중...' : `자료 ${matsResetTargets.length}건 지우기`}
+                                        </button>
                                     </div>
                                 )}
 
@@ -3683,7 +4573,7 @@
                                     <i className="fa-solid fa-triangle-exclamation" style={{ color: 'var(--rose)' }}></i>
                                 </div>
                                 <h3 className="font-extrabold mb-2 text-sm">{customConfirm.title}</h3>
-                                <p className="text-xs mb-6 leading-relaxed" style={{ color: 'var(--txt-dim)' }}>{customConfirm.message}</p>
+                                <p className="text-xs mb-6 leading-relaxed whitespace-pre-line" style={{ color: 'var(--txt-dim)' }}>{customConfirm.message}</p>
                                 <div className="flex gap-2.5">
                                     <button onClick={()=>setCustomConfirm(null)} className="btn btn-ghost flex-1 text-xs font-bold py-3 rounded-xl">취소</button>
                                     <button onClick={()=>{customConfirm.onConfirm(); setCustomConfirm(null);}} className="btn flex-1 text-xs font-bold py-3 rounded-xl text-white" style={{ background: 'var(--pink)' }}>실행</button>
