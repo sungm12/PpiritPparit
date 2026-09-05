@@ -1181,170 +1181,18 @@
             return 1 + Math.floor((mins - base) / step);
         };
 
-        // 같은 씨앗이면 어디서 보든 공이 똑같이 튄다.
-        const mulberry32 = (seed) => {
-            let a = seed >>> 0;
-            return () => {
-                a = (a + 0x6D2B79F5) >>> 0;
-                let t = Math.imul(a ^ (a >>> 15), 1 | a);
-                t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-                return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-            };
-        };
 
-        /* 핀볼 판. 캔버스로 그린다 — 공이 많아도 부드럽게 돈다. */
-        const PinballBoard = ({ tickets, draw, winnerName, onFinish }) => {
-            const canvasRef = useRef(null);
-            const stateRef  = useRef(null);
-            const phaseRef  = useRef('idle');
-            const [phase, setPhase] = useState('idle');   // idle | falling | done
-            useEffect(() => { phaseRef.current = phase; }, [phase]);
+        /* ── 핀볼 판 ────────────────────────────────────────────────
+           가장 늦게까지 굴러다닌 공의 주인이 당첨이다.
 
-            const W = 340, H = 420;
-            const PEG_ROWS = 9, PEG_GAP = 34, PEG_R = 3.6, BALL_R = 6.2;
+           코스는 곧게 떨어지지 않고 지그재그 선반을 타고 내려간다.
+           판 높이는 720이지만 공이 실제로 굴러가는 거리는 그 서너 배라,
+           속도를 올려도 시간이 오래 걸린다. 중간의 회전 막대가
+           매번 다른 쪽으로 튕겨내서 결과를 예측할 수 없게 만든다.
 
-            useEffect(() => {
-                const cvs = canvasRef.current;
-                if (!cvs) return;
-                const ctx = cvs.getContext('2d');
-                const dpr = Math.min(window.devicePixelRatio || 1, 2);
-                cvs.width = W * dpr; cvs.height = H * dpr;
-                ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-                const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-
-                // 못 배치
-                const pegs = [];
-                for (let r = 0; r < PEG_ROWS; r++) {
-                    const y = 118 + r * 30;
-                    const n = 7 + (r % 2);
-                    const off = (r % 2) ? 0 : PEG_GAP / 2;
-                    for (let c = 0; c < n; c++) {
-                        const x = W/2 - ((n - 1) * PEG_GAP) / 2 + c * PEG_GAP + off - (r % 2 ? 0 : 0);
-                        if (x > 14 && x < W - 14) pegs.push({ x, y });
-                    }
-                }
-
-                const rand = mulberry32(draw ? (draw.seed || 1) : 12345);
-
-                // 공 만들기 — 응모권 하나가 공 하나. 너무 많으면 화면용으로 줄인다.
-                const shown = Math.min(tickets.length, 90);
-                const drawn = !!(draw && draw.drawnAt);
-                const balls = tickets.slice(0, shown).map((t, i) => {
-                    // 움직임을 줄이도록 설정했고 이미 추첨이 끝났다면, 굴리지 않고 바닥에 놓는다
-                    if (reduce && drawn) {
-                        const perRow = 22, row = Math.floor(i / perRow), col = i % perRow;
-                        return { x: 24 + col * ((W - 48) / perRow) + (row % 2 ? 6 : 0),
-                                 y: H - 34 - row * 11, vx: 0, vy: 0,
-                                 color: t.color, winner: !!t.winner, seedPhase: 0, settled: true };
-                    }
-                    return {
-                        x: W/2 + (rand() - .5) * 120,
-                        y: 40 + (rand() - .5) * 46,
-                        vx: 0, vy: 0,
-                        color: t.color,
-                        winner: !!t.winner,
-                        seedPhase: rand() * Math.PI * 2,
-                        settled: false
-                    };
-                });
-
-                stateRef.current = { ctx, pegs, balls, reduce, t0: performance.now() };
-
-                let raf;
-                const loop = (now) => {
-                    const st = stateRef.current;
-                    if (!st) return;
-                    const falling = phaseRef.current === 'falling' || phaseRef.current === 'done';
-                    ctx.clearRect(0, 0, W, H);
-
-                    // 판 배경
-                    const grad = ctx.createLinearGradient(0, 0, 0, H);
-                    grad.addColorStop(0, 'rgba(255,255,255,.05)');
-                    grad.addColorStop(1, 'rgba(255,255,255,.02)');
-                    ctx.fillStyle = grad;
-                    ctx.beginPath(); ctx.roundRect(6, 6, W-12, H-12, 22); ctx.fill();
-                    ctx.strokeStyle = 'rgba(128,128,128,.28)'; ctx.lineWidth = 1.5; ctx.stroke();
-
-                    // 못
-                    ctx.fillStyle = 'rgba(150,150,160,.55)';
-                    st.pegs.forEach(p => { ctx.beginPath(); ctx.arc(p.x, p.y, PEG_R, 0, 6.283); ctx.fill(); });
-
-                    // 당첨 컵
-                    const cupY = H - 54, cupW = 96;
-                    ctx.strokeStyle = '#C7F03E'; ctx.lineWidth = 3;
-                    ctx.beginPath();
-                    ctx.moveTo(W/2 - cupW/2, cupY); ctx.lineTo(W/2 - cupW/2, H - 20);
-                    ctx.lineTo(W/2 + cupW/2, H - 20); ctx.lineTo(W/2 + cupW/2, cupY);
-                    ctx.stroke();
-                    ctx.fillStyle = 'rgba(199,240,62,.13)';
-                    ctx.fillRect(W/2 - cupW/2, cupY, cupW, H - 20 - cupY);
-
-                    // 공
-                    st.balls.forEach(b => {
-                        if (falling && !b.settled) {
-                            b.vy += st.reduce ? 1.2 : 0.34;
-                            b.x += b.vx; b.y += b.vy;
-                            b.vx *= 0.995;
-
-                            st.pegs.forEach(p => {
-                                const dx = b.x - p.x, dy = b.y - p.y;
-                                const d = Math.hypot(dx, dy);
-                                if (d < PEG_R + BALL_R && d > 0) {
-                                    const nx = dx / d, ny = dy / d;
-                                    b.x = p.x + nx * (PEG_R + BALL_R);
-                                    b.y = p.y + ny * (PEG_R + BALL_R);
-                                    const dot = b.vx * nx + b.vy * ny;
-                                    b.vx = (b.vx - 2 * dot * nx) * 0.52 + (nx > 0 ? .45 : -.45);
-                                    b.vy = Math.max(.4, (b.vy - 2 * dot * ny) * 0.42);
-                                }
-                            });
-                            if (b.x < 16 + BALL_R) { b.x = 16 + BALL_R; b.vx = Math.abs(b.vx) * .6; }
-                            if (b.x > W - 16 - BALL_R) { b.x = W - 16 - BALL_R; b.vx = -Math.abs(b.vx) * .6; }
-                            if (b.y > H - 30 - BALL_R) { b.y = H - 30 - BALL_R; b.vy *= -.22; b.vx *= .7;
-                                if (Math.abs(b.vy) < .6) b.settled = true; }
-                        } else if (phaseRef.current === 'idle') {
-                            // 대기 중에는 위쪽에서 살짝 흔들린다
-                            const t = (now - st.t0) / 1000;
-                            b.y += Math.sin(t * 1.6 + b.seedPhase) * 0.16;
-                            b.x += Math.cos(t * 1.1 + b.seedPhase) * 0.12;
-                        }
-
-                        ctx.beginPath(); ctx.arc(b.x, b.y, BALL_R, 0, 6.283);
-                        ctx.fillStyle = b.color; ctx.fill();
-                        ctx.lineWidth = 1.6; ctx.strokeStyle = '#3D3229'; ctx.stroke();
-                        if (b.winner && phaseRef.current === 'done') {
-                            ctx.beginPath(); ctx.arc(b.x, b.y, BALL_R + 5, 0, 6.283);
-                            ctx.strokeStyle = '#FFD166'; ctx.lineWidth = 2.6; ctx.stroke();
-                        }
-                    });
-
-                    raf = requestAnimationFrame(loop);
-                };
-                loop(performance.now());   // 첫 프레임은 즉시 그린다
-                return () => cancelAnimationFrame(raf);
-            }, [tickets.length, draw && draw.drawnAt]);
-
-            // 추첨 결과가 도착하면 자동으로 굴린다
-            useEffect(() => {
-                if (!draw || !draw.drawnAt) { setPhase('idle'); return; }
-                setPhase('falling');
-                const t = setTimeout(() => { setPhase('done'); onFinish && onFinish(); }, 4200);
-                return () => clearTimeout(t);
-            }, [draw && draw.drawnAt]);
-
-            return (
-                <div className="pinball-wrap">
-                    <canvas ref={canvasRef} style={{ width: '100%', maxWidth: W, height: 'auto', display: 'block', margin: '0 auto' }} />
-                    {phase === 'done' && winnerName && (
-                        <div className="glass rounded-2xl p-4 mt-4 text-center reveal">
-                            <div className="eyebrow text-[9px] mb-2">Winner</div>
-                            <div className="text-xl font-extrabold" style={{ color: 'var(--lime-ink)' }}>{winnerName}</div>
-                        </div>
-                    )}
-                </div>
-            );
-        };
+           물리 계산이 곧 추첨이므로 모든 학생 화면에서 결과가 같아야 한다.
+           그래서 화면 주사율에 기대지 않고 1초에 정확히 60번만 계산하고,
+           회전 막대 각도도 시간이 아니라 프레임 번호로 정한다. */
 
         // 섹션 헤더
         const SectionTitle = ({ eyebrow, title, right }) => (
@@ -1428,7 +1276,6 @@
             // 핀볼 추첨
             const [pinballSettings, setPinballSettings] = useState({ enabled: false, startDate: '', endDate: '', prize: '', baseHours: 30, stepHours: 10 });
             const [editPinball, setEditPinball] = useState(null);
-            const [pinballDraw, setPinballDraw] = useState(null);
             // 학습부가 미리 계산해 둔 응모 명단. 학생은 이것만 읽는다.
             const [pinballRoster, setPinballRoster] = useState(null);
             const [rosterBusy, setRosterBusy] = useState(false);
@@ -1622,7 +1469,6 @@
                                 listenToCloudSettings();
                                 listenToLiveStudyUsers();
                                 listenToCloudUsers();
-                                listenToPinballDraw();
                                 listenToPinballRoster();
                                 // 승인 기록 원본은 임원(rank 2)부터만 내려받는다.
                                 // «공부 시간 데이터» 창이 기간을 직접 재집계해야 해서 원본이 필요하다.
@@ -1735,14 +1581,6 @@
                         if (data.notice !== undefined) { setNoticeText(data.notice); setEditNotice(data.notice); }
                         if (data.pinball) { setPinballSettings(data.pinball); setEditPinball(data.pinball); }
                     }
-                });
-            };
-
-            const listenToPinballDraw = () => {
-                const { doc } = window.firebaseMethods;
-                const onSnapshot = trackedOnSnapshot;
-                onSnapshot(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'settings', 'pinball'), (docSnap) => {
-                    setPinballDraw(docSnap.exists() ? docSnap.data() : null);
                 });
             };
 
@@ -2460,40 +2298,6 @@
                 setPinballBusy(false);
             };
 
-            /* 추첨. 응모권 수만큼 이름이 들어간 통에서 하나를 뽑고,
-               결과와 씨앗을 서버에 적어 모두가 같은 화면을 보게 한다. */
-            const handlePinballDraw = () => {
-                if ((user?.rank || 1) < 3 || !window.firebaseMethods) return;
-                if (pinballTotalTickets === 0) return triggerAlert('아직 응모한 학생이 없습니다.');
-                triggerConfirm(`응모권 ${pinballTotalTickets}장 중에서 한 명을 뽑습니다. 진행할까요?`, async () => {
-                    const pool = pinballEntrants.flatMap(e => Array.from({ length: e.tickets }, () => e));
-                    const pick = pool[Math.floor(Math.random() * pool.length)];
-                    setPinballBusy(true);
-                    try {
-                        const { doc, setDoc } = window.firebaseMethods;
-                        await setDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'settings', 'pinball'), {
-                            seed: Math.floor(Math.random() * 2147483647),
-                            winnerUid: pick.uid, winnerName: pick.name, winnerGrade: pick.grade,
-                            totalTickets: pinballTotalTickets, entrants: pinballEntrants.length,
-                            prize: pinballSettings.prize || '', drawnAt: Date.now()
-                        });
-                        showToast(`${pick.name} 학생이 당첨되었습니다!`);
-                    } catch (err) { triggerAlert('추첨 결과를 저장하지 못했습니다.'); }
-                    setPinballBusy(false);
-                }, '핀볼 추첨');
-            };
-
-            const handlePinballReset = () => {
-                if ((user?.rank || 1) < 3 || !window.firebaseMethods) return;
-                triggerConfirm('추첨 결과를 지우고 다시 뽑을 수 있게 할까요?', async () => {
-                    try {
-                        const { doc, deleteDoc } = window.firebaseMethods;
-                        await deleteDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'settings', 'pinball'));
-                        showToast('추첨 결과를 지웠습니다.');
-                    } catch (err) { triggerAlert('삭제하지 못했습니다.'); }
-                });
-            };
-
             const handleAdminSettingsSave = async (e) => {
                 e.preventDefault();
                 setDdaySettings(editDday);
@@ -2606,12 +2410,22 @@
 
             const pinballTotalTickets = pinballEntrants.reduce((a, e) => a + e.tickets, 0);
 
-            // 공 하나 = 응모권 하나. 당첨자 공만 표시가 다르다.
-            const pinballBalls = pinballEntrants.flatMap(e =>
-                Array.from({ length: e.tickets }, () => ({
-                    color: PETS[petIndexOf(e.uid, e.petId)].fill,
-                    winner: !!(pinballDraw && pinballDraw.winnerUid === e.uid)
-                })));
+            /* 추첨은 외부 룰렛 사이트에서 돌린다.
+               그 사이트 입력 형식이 «이름*개수, 이름*개수» 라서 그대로 만들어 둔다. */
+            const pinballEntryList = pinballEntrants
+                .map(e => `${e.name}*${e.tickets}`)
+                .join(', ');
+
+            const handleCopyEntryList = async () => {
+                if (!pinballEntryList) return;
+                try {
+                    await navigator.clipboard.writeText(pinballEntryList);
+                    showToast('명단을 복사했습니다.');
+                } catch (err) {
+                    // 클립보드를 막아둔 브라우저도 있으므로 안내만 한다
+                    triggerAlert('복사가 막혀 있습니다.\n아래 칸을 눌러 전체 선택한 뒤 직접 복사해 주세요.');
+                }
+            };
 
             const myRosterEntry    = user ? pinballEntrants.find(e => e.uid === user.uid) : null;
             const myPinballMins    = myRosterEntry ? myRosterEntry.mins : 0;
@@ -3289,66 +3103,32 @@
                                 : (base * 60 + myPinballTickets * step * 60) - myPinballMins;
                             const running = pinballSettings.startDate && pinballSettings.endDate;
                             return (
-                                <div className="grid grid-cols-1 lg:grid-cols-[1fr_.85fr] gap-6">
-                                    <div className="glass topline rounded-[28px] p-7 reveal d1">
-                                        <SectionTitle eyebrow="Live" title="핀볼 판"
-                                            right={<span className="tag tag-brand font-mono">응모권 {pinballTotalTickets}장</span>} />
-                                        {pinballTotalTickets > 0 ? (
-                                            <PinballBoard tickets={pinballBalls} draw={pinballDraw}
-                                                          winnerName={pinballDraw && pinballDraw.winnerName} />
-                                        ) : (
-                                            <EmptyState icon="fa-trophy" title="아직 응모한 학생이 없어요"
-                                                        desc={`${base}시간을 채우면 첫 응모권이 들어갑니다.`} />
-                                        )}
-                                        {pinballDraw && pinballDraw.drawnAt && (
-                                            <p className="text-[11px] mt-4 text-center font-mono" style={{ color: 'var(--txt-faint)' }}>
-                                                {new Date(pinballDraw.drawnAt).toLocaleString('ko-KR')} 추첨 · 응모권 {pinballDraw.totalTickets}장
-                                            </p>
-                                        )}
-                                    </div>
+                                <div className="max-w-lg mx-auto">
+                                    <div className="glass topline rounded-[28px] p-8 reveal d1">
+                                        <SectionTitle eyebrow="My Tickets" title="내 응모권" />
 
-                                    <div className="space-y-6">
-                                        <div className="glass rounded-[28px] p-7 reveal d2">
-                                            <SectionTitle eyebrow="My Tickets" title="내 응모권" />
-                                            <div className="flex items-end gap-3 mb-4">
-                                                <span className="font-mono text-4xl font-extrabold" style={{ color: 'var(--lime-ink)' }}>{myPinballTickets}</span>
-                                                <span className="text-sm mb-1.5" style={{ color: 'var(--txt-dim)' }}>장</span>
-                                            </div>
-                                            <div className="pet-track" style={{ height: 10 }}>
-                                                <div className="pet-fill" style={{ width: `${Math.min(100, Math.round((myPinballMins / (base*60)) * 100))}%` }}></div>
-                                            </div>
-                                            <p className="text-[11px] mt-3 leading-relaxed" style={{ color: 'var(--txt-faint)' }}>
-                                                기간 내 <span className="font-mono" style={{ color: 'var(--txt-dim)' }}>{fmtHM(myPinballMins)}</span> 인정됐어요.
-                                                {nextAt > 0 && <> <span className="font-mono" style={{ color: 'var(--lime-ink)' }}>{fmtHM(nextAt)}</span> 더 하면 한 장 더 들어갑니다.</>}
-                                            </p>
-                                            <div className="divider my-5"></div>
-                                            <p className="text-[11px] leading-relaxed" style={{ color: 'var(--txt-faint)' }}>
-                                                <b style={{ color: 'var(--txt-dim)' }}>{base}시간</b>을 채우면 이름이 한 번 들어가고,
-                                                그 뒤로 <b style={{ color: 'var(--txt-dim)' }}>{step}시간</b>마다 한 번씩 더 들어갑니다.
-                                                {running && <><br />기간 <span className="font-mono">{pinballSettings.startDate} ~ {pinballSettings.endDate}</span></>}
-                                                {pinballSettings.prize && <><br />상품 · <b style={{ color: 'var(--gold)' }}>{pinballSettings.prize}</b></>}
-                                            </p>
+                                        <div className="flex items-end justify-center gap-3 my-7">
+                                            <span className="font-mono text-7xl font-extrabold leading-none"
+                                                  style={{ color: 'var(--lime-ink)' }}>{myPinballTickets}</span>
+                                            <span className="text-lg mb-2" style={{ color: 'var(--txt-dim)' }}>장</span>
                                         </div>
 
-                                        <div className="glass rounded-[28px] p-7 reveal d3">
-                                            <SectionTitle eyebrow="Entrants" title="응모 현황"
-                                                right={<span className="tag tag-neutral font-mono">{pinballEntrants.length}명</span>} />
-                                            <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-                                                {pinballEntrants.map((e, i) => (
-                                                    <div key={e.uid} className="flex items-center gap-2.5 text-xs">
-                                                        <span className="font-mono text-[10px] w-5 shrink-0" style={{ color: 'var(--txt-faint)' }}>{i+1}</span>
-                                                        <span className="shrink-0" style={{ lineHeight: 0 }}>
-                                                            <Pet uid={e.uid} petId={e.petId} mins={0} size={26} ground={false} animate={false} />
-                                                        </span>
-                                                        <span className="font-bold truncate flex-1">{e.name}</span>
-                                                        <span className="tag tag-brand font-mono shrink-0">{e.tickets}장</span>
-                                                    </div>
-                                                ))}
-                                                {pinballEntrants.length === 0 && (
-                                                    <p className="text-[11px] py-4 text-center" style={{ color: 'var(--txt-faint)' }}>첫 번째 응모자가 되어보세요.</p>
-                                                )}
-                                            </div>
+                                        <div className="pet-track" style={{ height: 12 }}>
+                                            <div className="pet-fill" style={{ width: `${Math.min(100, Math.round((myPinballMins / (base*60)) * 100))}%` }}></div>
                                         </div>
+                                        <p className="text-xs mt-3.5 leading-relaxed text-center" style={{ color: 'var(--txt-faint)' }}>
+                                            기간 내 <span className="font-mono" style={{ color: 'var(--txt-dim)' }}>{fmtHM(myPinballMins)}</span> 인정됐어요.
+                                            {nextAt > 0 && <> <span className="font-mono" style={{ color: 'var(--lime-ink)' }}>{fmtHM(nextAt)}</span> 더 하면 한 장 더 들어갑니다.</>}
+                                        </p>
+
+                                        <div className="divider my-6"></div>
+
+                                        <p className="text-[11px] leading-relaxed text-center" style={{ color: 'var(--txt-faint)' }}>
+                                            <b style={{ color: 'var(--txt-dim)' }}>{base}시간</b>을 채우면 이름이 한 번 들어가고,
+                                            그 뒤로 <b style={{ color: 'var(--txt-dim)' }}>{step}시간</b>마다 한 번씩 더 들어갑니다.
+                                            {running && <><br />기간 <span className="font-mono">{pinballSettings.startDate} ~ {pinballSettings.endDate}</span></>}
+                                            {pinballSettings.prize && <><br />상품 · <b style={{ color: 'var(--gold)' }}>{pinballSettings.prize}</b></>}
+                                        </p>
                                     </div>
                                 </div>
                             );
@@ -4166,7 +3946,7 @@
                                     <form onSubmit={handlePinballSave} className="p-6 space-y-5 max-h-[70vh] overflow-y-auto reveal">
                                         <div className="grid grid-cols-3 gap-2.5">
                                             {[['응모 학생', `${pinballEntrants.length}명`], ['응모권', `${pinballTotalTickets}장`],
-                                              ['당첨자', pinballDraw && pinballDraw.winnerName ? pinballDraw.winnerName : '아직 없음']].map(([k, v]) => (
+                                              ['기준', `${(editPinball || {}).baseHours ?? 30}h+`]].map(([k, v]) => (
                                                 <div key={k} className="glass rounded-2xl p-3.5 text-center">
                                                     <div className="eyebrow text-[8px] mb-1.5">{k}</div>
                                                     <div className="font-mono text-sm font-extrabold">{v}</div>
@@ -4241,30 +4021,27 @@
 
                                         <div className="divider"></div>
 
-                                        {pinballDraw && pinballDraw.drawnAt ? (
-                                            <div className="glass rounded-2xl p-4 text-center space-y-3">
-                                                <div className="eyebrow text-[9px]">추첨 완료</div>
-                                                <div className="text-lg font-extrabold" style={{ color: 'var(--lime-ink)' }}>
-                                                    {pinballDraw.winnerName}
-                                                    <span className="text-xs font-normal ml-2" style={{ color: 'var(--txt-faint)' }}>{pinballDraw.winnerGrade}</span>
-                                                </div>
-                                                <p className="text-[11px] font-mono" style={{ color: 'var(--txt-faint)' }}>
-                                                    {new Date(pinballDraw.drawnAt).toLocaleString('ko-KR')} · 응모권 {pinballDraw.totalTickets}장
-                                                </p>
-                                                <button type="button" onClick={handlePinballReset}
-                                                        className="btn btn-ghost w-full py-2.5 rounded-xl text-xs font-bold" style={{ color: 'var(--rose)' }}>
-                                                    결과 지우고 다시 뽑기
+                                        {/* 추첨은 외부 룰렛 사이트에서 돌린다.
+                                            그 사이트가 «이름*개수, 이름*개수» 형식을 받으므로 그대로 만들어 둔다. */}
+                                        <div>
+                                            <div className="flex items-center justify-between gap-2 mb-2">
+                                                <label className="eyebrow text-[9px]">추첨 명단 · {pinballEntrants.length}명 {pinballTotalTickets}장</label>
+                                                <button type="button" onClick={handleCopyEntryList}
+                                                        disabled={pinballTotalTickets === 0}
+                                                        className="btn btn-ghost px-3 py-1.5 rounded-lg text-[10px] font-bold">
+                                                    <i className="fa-regular fa-copy mr-1.5"></i>복사
                                                 </button>
                                             </div>
-                                        ) : (
-                                            <button type="button" onClick={handlePinballDraw} disabled={pinballBusy || pinballTotalTickets === 0}
-                                                    className="btn btn-pink w-full font-extrabold py-4 rounded-2xl text-sm">
-                                                🎱 추첨하기 ({pinballTotalTickets}장)
-                                            </button>
-                                        )}
-                                        <p className="text-[10px] leading-relaxed" style={{ color: 'var(--txt-faint)' }}>
-                                            추첨하면 결과가 서버에 저장되어, 모든 학생 화면에서 같은 공 궤적과 같은 당첨자가 보입니다.
-                                        </p>
+                                            <textarea readOnly value={pinballEntryList}
+                                                      onFocus={(e) => e.target.select()}
+                                                      placeholder="30시간을 채운 학생이 아직 없습니다"
+                                                      className="fld text-[11px] font-mono leading-relaxed"
+                                                      style={{ minHeight: 150, resize: 'vertical' }} />
+                                            <p className="text-[10px] leading-relaxed mt-2" style={{ color: 'var(--txt-faint)' }}>
+                                                이대로 복사해서 룰렛 사이트 이름 칸에 붙여넣으면 됩니다.
+                                                응모권 수만큼 이름이 들어갑니다.
+                                            </p>
+                                        </div>
                                     </form>
                                 )}
 
