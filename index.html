@@ -2964,7 +2964,7 @@
                     </header>
 
                     {/* ── 공지 & D-Day 티커 ──────────────── */}
-                    {(noticeText || ddaySettings) && (
+                    {(noticeText || (ddaySettings && (ddaySettings.csat || ddaySettings.examDate))) && (
                         <div className="border-b" style={{ borderColor: 'var(--line)', background: 'color-mix(in srgb, var(--lime) 6%, transparent)' }}>
                             <div className="max-w-7xl mx-auto py-2.5 px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row sm:items-center gap-3">
                                 {noticeText && (
