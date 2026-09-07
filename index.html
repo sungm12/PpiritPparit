@@ -310,6 +310,14 @@
         }
         .btn-ghost:hover { color: var(--txt); border-color: var(--line-str); background: var(--surface); }
 
+        /* 하트. 누르면 살짝 커졌다가 돌아온다 */
+        .like-btn { background:none; border:0; padding:2px 4px; cursor:pointer;
+                    display:inline-flex; align-items:center; line-height:1;
+                    transition: transform .12s ease, color .12s ease; }
+        .like-btn:hover { transform: scale(1.14); }
+        .like-btn:active { transform: scale(.92); }
+        @media (prefers-reduced-motion: reduce) { .like-btn { transition:none; } }
+
         .icon-btn {
             display:grid; place-items:center; width:38px; height:38px; border-radius:12px;
             color: var(--txt-faint); border:1px solid transparent;
@@ -1262,9 +1270,6 @@
             // QnA 작성 상태 확장
             const [newQnaTitle, setNewQnaTitle] = useState("");
             const [newQnaContent, setNewQnaContent] = useState("");
-            const [newQnaGrade, setNewQnaGrade] = useState("1학년");
-            const [newQnaSubject, setNewQnaSubject] = useState("수학");
-            const [newQnaSubSubject, setNewQnaSubSubject] = useState("");
 
             // 초기화 (최고 관리자 전용)
             const [resetHoursDate, setResetHoursDate] = useState('');
@@ -1305,7 +1310,6 @@
             const [ddaySettings, setDdaySettings] = useState({ csat: '2026-11-12', examName: '학교 행사', examDate: '2026-12-10' });
             const [editDday, setEditDday] = useState({ ...ddaySettings });
 
-            const [commentInput, setCommentInput] = useState("");
             const [toast, setToast] = useState(null);
             const [customConfirm, setCustomConfirm] = useState(null);
             const [customAlert, setCustomAlert] = useState(null);
@@ -2136,8 +2140,8 @@
                         fileName: uploadedAttachments[0].fileName,
                         fileUrl: uploadedAttachments[0].fileUrl,
                         attachments: uploadedAttachments, // 여러 파일 배열 저장
-                        downloads: 0, likes: 0, isVerified: (user.rank || 1) >= 2,
-                        description: newDescription, comments: [], date: new Date().toISOString().split('T')[0]
+                        downloads: 0, likes: 0, likedBy: [], isVerified: (user.rank || 1) >= 2,
+                        description: newDescription, date: new Date().toISOString().split('T')[0]
                     };
                     await setDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'materials', newId), formatDoc);
                     showToast("자료가 성공적으로 업로드되었습니다.");
@@ -2156,25 +2160,38 @@
                 else triggerAlert("파일을 찾을 수 없습니다.");
             };
 
-            const handleCommentSubmit = async (e, targetId, isQna = false) => {
-                e.preventDefault();
-                if (!user || !commentInput.trim()) return;
+            /* 좋아요. 누른 사람을 목록으로 들고 있어야
+               같은 사람이 여러 번 눌러도 한 번만 세고, 다시 누르면 취소된다. */
+            const likedByMe = (mat) => !!(user && (mat.likedBy || []).includes(user.uid));
+
+            const handleToggleLike = async (mat) => {
+                if (!user) return;
                 if (!requireVerified()) return;
-                const newComment = { id: String(Date.now()), author: user.name, text: commentInput.trim(), date: new Date().toISOString().split('T')[0] };
+                if (isLocalMode) return triggerAlert('클라우드 동기화가 꺼져 있습니다.');
 
-                if (!isLocalMode && window.firebaseMethods) {
+                const before = mat.likedBy || [];
+                const next = before.includes(user.uid)
+                    ? before.filter(u => u !== user.uid)
+                    : [...before, user.uid];
+
+                // 화면을 먼저 바꿔 준다. 서버 응답을 기다리면 눌러도 반응이 없는 것처럼 느껴진다.
+                setMaterials(prev => prev.map(m =>
+                    m.id === mat.id ? { ...m, likedBy: next, likes: next.length } : m));
+                setSelectedMaterial(prev =>
+                    prev && prev.id === mat.id ? { ...prev, likedBy: next, likes: next.length } : prev);
+
+                try {
                     const { doc, updateDoc } = window.firebaseMethods;
-                    const collectionName = isQna ? 'qna' : 'materials';
-                    const targetList = isQna ? qnaList : materials;
-                    const target = targetList.find(item => item.id === targetId);
-
-                    if (target) {
-                        const updateData = { comments: [...(target.comments || []), newComment] };
-                        if(isQna) updateData.answers = (target.answers || 0) + 1;
-                        updateDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', collectionName, targetId), updateData).catch(()=>{});
-                    }
+                    await updateDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'materials', mat.id),
+                                    { likedBy: next, likes: next.length });
+                } catch (err) {
+                    // 실패하면 되돌린다. 안 그러면 눌린 것처럼 보이는데 서버엔 없다.
+                    setMaterials(prev => prev.map(m =>
+                        m.id === mat.id ? { ...m, likedBy: before, likes: before.length } : m));
+                    setSelectedMaterial(prev =>
+                        prev && prev.id === mat.id ? { ...prev, likedBy: before, likes: before.length } : prev);
+                    triggerAlert('좋아요를 저장하지 못했습니다. 잠시 뒤 다시 눌러 주세요.');
                 }
-                setCommentInput(""); showToast("댓글을 등록했습니다.");
             };
 
             const handleQnaSubmit = async (e) => {
@@ -2184,8 +2201,7 @@
                 if(!newQnaTitle || !newQnaContent) return triggerAlert("제목/내용을 적어주세요.");
                 const newQna = {
                     id: String(Date.now()), title: newQnaTitle, content: newQnaContent,
-                    grade: newQnaGrade, subject: newQnaSubject, subSubject: newQnaSubSubject,
-                    author: user.name, authorEmail: user.email, date: new Date().toISOString().split('T')[0], answers: 0, comments: []
+                    author: user.name, authorEmail: user.email, date: new Date().toISOString().split('T')[0]
                 };
                 if (!isLocalMode && window.firebaseMethods) {
                     const { doc, setDoc } = window.firebaseMethods;
@@ -2758,7 +2774,7 @@
                 { key: 'pet',       label: '내 캐릭터',     short: '캐릭터', icon: 'fa-paw' },
                 { key: 'studyRoom', label: '온라인 자습실', short: '자습실', icon: 'fa-stopwatch' },
                 { key: 'materials', label: '학습 자료실',   short: '자료실', icon: 'fa-folder-open' },
-                { key: 'qna',       label: '질문 / 요청',   short: '질문',   icon: 'fa-circle-question' },
+                { key: 'qna',       label: '요구사항',      short: '요구',   icon: 'fa-circle-question' },
                 { key: 'pinball',   label: '핀볼 추첨',     short: '핀볼',   icon: 'fa-trophy' }
             ];
             const tabIndex = Math.max(0, MAIN_TABS.findIndex(t => t.key === activeMainTab));
@@ -3305,7 +3321,13 @@
                                             <div className="px-6 py-4 flex justify-between items-center text-[11px] font-semibold border-t" style={{ borderColor: 'var(--line)', color: 'var(--txt-faint)' }}>
                                                 <span className="flex items-center gap-1.5"><i className="fa-regular fa-user text-[10px]"></i>{mat.uploader}</span>
                                                 <div className="flex gap-3.5 font-mono">
-                                                    <span style={{ color: 'var(--rose)' }}><i className="fa-solid fa-heart mr-1 text-[10px]"></i>{mat.likes || 0}</span>
+                                                    <button type="button" title={likedByMe(mat) ? '좋아요 취소' : '좋아요'}
+                                                            onClick={(e) => { e.stopPropagation(); handleToggleLike(mat); }}
+                                                            className="like-btn font-mono"
+                                                            style={{ color: likedByMe(mat) ? 'var(--rose)' : 'var(--txt-faint)' }}>
+                                                        <i className={`${likedByMe(mat) ? 'fa-solid' : 'fa-regular'} fa-heart mr-1 text-[10px]`}></i>
+                                                        {(mat.likedBy ? mat.likedBy.length : (mat.likes || 0))}
+                                                    </button>
                                                     <span style={{ color: 'var(--brand-lt)' }}><i className="fa-solid fa-download mr-1 text-[10px]"></i>{mat.downloads || 0}</span>
                                                 </div>
                                             </div>
@@ -3320,24 +3342,22 @@
                             </div>
                         )}
 
-                        {/* ── 질문 / 자료요청 ────────────── */}
+                        {/* ── 요구사항 ──────────────────── */}
                         {activeMainTab === 'qna' && (
                             <div className="space-y-5">
                                 <div className="glass rounded-3xl p-4 flex flex-col sm:flex-row gap-3 items-center reveal d1">
                                     <div className="w-full relative">
                                         <span className="absolute inset-y-0 left-0 flex items-center pl-4" style={{ color: 'var(--txt-faint)' }}><i className="fa-solid fa-magnifying-glass text-xs"></i></span>
-                                        <input type="text" placeholder="질문이나 요청 내용 검색" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="fld pl-11" />
+                                        <input type="text" placeholder="요구사항 검색" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className="fld pl-11" />
                                     </div>
                                     <button onClick={() => {
                                         setIsQnaWriteOpen(true);
-                                        setNewQnaGrade("1학년"); setNewQnaSubject(Object.keys(CURRICULUM["1학년"])[0]); setNewQnaSubSubject(CURRICULUM["1학년"][Object.keys(CURRICULUM["1학년"])[0]][0] || "");
                                     }} className="btn btn-primary w-full sm:w-auto shrink-0 font-bold px-6 py-3 rounded-2xl text-sm flex items-center justify-center gap-2">
-                                        <i className="fa-solid fa-feather"></i>질문 작성하기
+                                        <i className="fa-solid fa-feather"></i>요구사항 올리기
                                     </button>
                                 </div>
 
-                                {renderFilterBar()}
-
+                                
                                 <div className="glass rounded-[24px] overflow-hidden reveal d4">
                                     {filteredQna.length > 0 ? (
                                         <ul className="divide-y" style={{ borderColor: 'var(--line)' }}>
@@ -3347,18 +3367,11 @@
                                                     style={{ animationDelay: `${Math.min(i, 9) * .05}s`, borderColor: 'var(--line)' }}
                                                     onClick={() => setSelectedQna(qna)}>
                                                     <div className="flex-1 min-w-0">
-                                                        <div className="flex gap-1.5 mb-2 flex-wrap">
-                                                            <span className="tag tag-brand">
-                                                                {qna.grade ? `${qna.grade} · ` : ''}{qna.subject}{qna.subSubject ? ` · ${qna.subSubject}` : ''}
-                                                            </span>
-                                                            {qna.answers > 0 && <span className="tag tag-gold"><i className="fa-solid fa-check text-[8px]"></i>답변완료</span>}
-                                                        </div>
                                                         <h3 className="text-sm font-extrabold tracking-tight">{qna.title}</h3>
                                                         <p className="text-xs mt-1.5 line-clamp-1" style={{ color: 'var(--txt-faint)' }}>{qna.content}</p>
                                                     </div>
                                                     <div className="text-[11px] shrink-0 flex sm:flex-col gap-3 sm:gap-1 sm:text-right" style={{ color: 'var(--txt-faint)' }}>
                                                         <span className="font-semibold">{qna.author}</span>
-                                                        <span className="font-mono"><i className="fa-regular fa-comment mr-1"></i>{qna.answers || 0}</span>
                                                         <span className="text-[10px] font-mono">{qna.date}</span>
                                                     </div>
                                                 </li>
@@ -3436,6 +3449,12 @@
                                             <span className="tag tag-neutral">{selectedMaterial.subject}{selectedMaterial.subSubject ? ` · ${selectedMaterial.subSubject}` : ''}</span>
                                         </div>
                                         <h2 className="text-lg font-extrabold tracking-tight leading-snug">{selectedMaterial.title}</h2>
+                                        <button type="button" onClick={() => handleToggleLike(selectedMaterial)}
+                                                className="like-btn mt-2.5 text-xs font-bold"
+                                                style={{ color: likedByMe(selectedMaterial) ? 'var(--rose)' : 'var(--txt-faint)' }}>
+                                            <i className={`${likedByMe(selectedMaterial) ? 'fa-solid' : 'fa-regular'} fa-heart mr-1.5`}></i>
+                                            좋아요 {(selectedMaterial.likedBy ? selectedMaterial.likedBy.length : (selectedMaterial.likes || 0))}
+                                        </button>
                                     </div>
                                     <button onClick={() => { setSelectedMaterial(null); setIsPreviewMode(false); setPreviewFileUrl(null); }} className="icon-btn shrink-0"><i className="fa-solid fa-xmark"></i></button>
                                 </div>
@@ -3482,20 +3501,6 @@
                                                 <span><i className="fa-regular fa-user mr-1.5"></i>{selectedMaterial.uploader} · {selectedMaterial.date}</span>
                                                 {currentUserRank >= 2 && <button onClick={() => deleteMaterial(selectedMaterial.id)} className="font-bold" style={{ color: 'var(--rose)' }}><i className="fa-solid fa-trash mr-1"></i>삭제</button>}
                                             </div>
-                                            <div className="eyebrow text-[9px]">Comments</div>
-                                            <div className="space-y-2.5 max-h-44 overflow-y-auto pr-1">
-                                                {(selectedMaterial.comments || []).map(c => (
-                                                    <div key={c.id} className="glass rounded-xl p-3.5 text-xs">
-                                                        <span className="font-bold mr-2" style={{ color: 'var(--brand-lt)' }}>{c.author}</span>
-                                                        <span style={{ color: 'var(--txt-dim)' }}>{c.text}</span>
-                                                    </div>
-                                                ))}
-                                                {(selectedMaterial.comments || []).length === 0 && <p className="text-[11px] py-3" style={{ color: 'var(--txt-faint)' }}>아직 댓글이 없습니다.</p>}
-                                            </div>
-                                            <form onSubmit={(e) => handleCommentSubmit(e, selectedMaterial.id, false)} className="flex gap-2">
-                                                <input type="text" placeholder="댓글 달기..." value={commentInput} onChange={(e)=>setCommentInput(e.target.value)} className="fld fld-sm flex-1" />
-                                                <button type="submit" className="btn btn-dark px-5 rounded-xl text-xs font-bold shrink-0">등록</button>
-                                            </form>
                                         </div>
                                     )}
                                 </div>
@@ -3523,24 +3528,9 @@
                                     </div>
                                     <div className="space-y-4 pt-2 reveal d2">
                                         <div className="flex justify-between items-center">
-                                            <div className="eyebrow text-[9px]">Answers · {selectedQna.answers || 0}</div>
+                                            <div className="eyebrow text-[9px]">Request</div>
                                             {currentUserRank >= 2 && <button onClick={() => deleteQna(selectedQna.id)} className="text-[11px] font-bold" style={{ color: 'var(--rose)' }}><i className="fa-solid fa-trash mr-1"></i>게시글 삭제</button>}
                                         </div>
-                                        <div className="space-y-2.5 max-h-60 overflow-y-auto pr-1">
-                                            {(selectedQna.comments || []).map(c => (
-                                                <div key={c.id} className="glass rounded-xl p-4 text-xs" style={{ borderColor: 'color-mix(in srgb, var(--lime) 18%, transparent)' }}>
-                                                    <div className="font-bold mb-1.5" style={{ color: 'var(--brand-lt)' }}>
-                                                        {c.author} <span className="font-normal text-[10px] ml-1.5 font-mono" style={{ color: 'var(--txt-faint)' }}>{c.date}</span>
-                                                    </div>
-                                                    <div style={{ color: 'var(--txt-dim)' }}>{c.text}</div>
-                                                </div>
-                                            ))}
-                                            {(selectedQna.comments || []).length === 0 && <p className="text-[11px] py-3" style={{ color: 'var(--txt-faint)' }}>첫 번째 답변을 남겨보세요.</p>}
-                                        </div>
-                                        <form onSubmit={(e) => handleCommentSubmit(e, selectedQna.id, true)} className="flex gap-2">
-                                            <input type="text" placeholder="답변을 남겨주세요." value={commentInput} onChange={(e)=>setCommentInput(e.target.value)} className="fld fld-sm flex-1" />
-                                            <button type="submit" className="btn btn-primary px-5 rounded-xl text-xs font-bold shrink-0">등록</button>
-                                        </form>
                                     </div>
                                 </div>
                             </div>
@@ -4207,7 +4197,7 @@
                         </div>
                     )}
 
-                    {/* ── 질문 작성 모달 ─────────────────── */}
+                    {/* ── 요구사항 작성 모달 ────────────── */}
                     {isQnaWriteOpen && (
                         <div className="modal-bd fixed inset-0 bg-black/75 backdrop-blur-md flex items-center justify-center z-50 p-4">
                             <div className="modal-card glass-solid rounded-[28px] max-w-md w-full overflow-hidden">
@@ -4217,38 +4207,16 @@
                                             <i className="fa-solid fa-feather text-sm" style={{ color: 'var(--brand-lt)' }}></i>
                                         </div>
                                         <div>
-                                            <div className="eyebrow text-[8px] mb-1">New Question</div>
-                                            <h2 className="text-sm font-extrabold">질문 / 요청 작성</h2>
+                                            <div className="eyebrow text-[8px] mb-1">New Request</div>
+                                            <h2 className="text-sm font-extrabold">요구사항 올리기</h2>
                                         </div>
                                     </div>
                                     <button onClick={()=>setIsQnaWriteOpen(false)} className="icon-btn"><i className="fa-solid fa-xmark"></i></button>
                                 </div>
                                 <form onSubmit={handleQnaSubmit} className="p-6 space-y-3.5 max-h-[70vh] overflow-y-auto">
-                                    <input type="text" placeholder="제목" value={newQnaTitle} onChange={(e)=>setNewQnaTitle(e.target.value)} className="fld" required />
+                                    <input type="text" placeholder="어떤 게 필요한가요?" value={newQnaTitle} onChange={(e)=>setNewQnaTitle(e.target.value)} className="fld" required />
 
-                                    {/* QnA용 계층형 드롭다운 */}
-                                    <div className="flex gap-2.5">
-                                        <select value={newQnaGrade} onChange={(e) => {
-                                            const g = e.target.value; setNewQnaGrade(g);
-                                            const firstSubj = Object.keys(CURRICULUM[g])[0] || ""; setNewQnaSubject(firstSubj);
-                                            setNewQnaSubSubject(CURRICULUM[g][firstSubj]?.[0] || "");
-                                        }} className="fld fld-sm flex-1">
-                                            {Object.keys(CURRICULUM).map(g => <option key={g} value={g}>{g}</option>)}
-                                        </select>
-                                        <select value={newQnaSubject} onChange={(e) => {
-                                            const s = e.target.value; setNewQnaSubject(s);
-                                            setNewQnaSubSubject(CURRICULUM[newQnaGrade][s]?.[0] || "");
-                                        }} className="fld fld-sm flex-1">
-                                            {Object.keys(CURRICULUM[newQnaGrade]).map(s => <option key={s} value={s}>{s}</option>)}
-                                        </select>
-                                    </div>
-                                    {CURRICULUM[newQnaGrade][newQnaSubject]?.length > 0 && (
-                                        <select value={newQnaSubSubject} onChange={(e) => setNewQnaSubSubject(e.target.value)} className="fld fld-sm reveal">
-                                            {CURRICULUM[newQnaGrade][newQnaSubject].map(ss => <option key={ss} value={ss}>{ss}</option>)}
-                                        </select>
-                                    )}
-
-                                    <textarea placeholder="내용을 자세히 적어주세요." value={newQnaContent} onChange={(e)=>setNewQnaContent(e.target.value)} rows="5" className="fld" required></textarea>
+                                    <textarea placeholder="왜 필요한지, 어떻게 됐으면 좋겠는지 적어주세요." value={newQnaContent} onChange={(e)=>setNewQnaContent(e.target.value)} rows="5" className="fld" required></textarea>
                                     <button type="submit" className="btn btn-primary w-full font-bold py-3.5 rounded-2xl text-sm">등록</button>
                                 </form>
                             </div>
