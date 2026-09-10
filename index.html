@@ -678,7 +678,10 @@
         body { letter-spacing: -0.011em; transition: none; }
 
         /* 배경 잔광·광택은 계속 끈다 */
-        .aurora, .aurora i, .grain, .vignette, .shine { display: none !important; }
+        .aurora, .aurora i, .grain, .vignette { display: none !important; }
+        /* .shine 은 상자 자체다. 숨기면 안에 든 내용까지 사라진다.
+           쓸고 지나가는 빛만 끈다. */
+        .shine::after { display: none !important; }
 
         /* 네온 글자 → 은은한 색 글자 */
         .neon-lime, .neon-pink, .neon-cyan,
@@ -1566,6 +1569,21 @@
             return true;
         };
 
+        /* 본문에서 찾은 숙어를 후보 앞에 얹는다.
+           숙어는 낱말 하나로는 절대 못 만나는 말이라, 쉬운 단어 접기에도 걸리지 않게 둔다. */
+        const vocabWithIdioms = (list, text) => {
+            if (!window.vocabFindIdioms || !text) return list;
+            let found;
+            try { found = window.vocabFindIdioms(text); } catch (e) { return list; }
+            if (!found || !found.length) return list;
+
+            const already = new Set(list.map(f => f.word));
+            const rows = found
+                .filter(f => f.phrase && f.meaning && !already.has(f.phrase))
+                .map(f => ({ word: f.phrase, meaning: f.meaning, easy: false, conf: 100, idiom: true }));
+            return rows.concat(list);
+        };
+
         /* 낱말 목록 → 화면에 뿌릴 후보.
            사전에 있으면 제대로 읽힌 것으로 본다 (사전과 맞아떨어지는 건 우연이 아니다).
            사전에 없으면 또렷하게 읽힌 것만 남긴다. strict 는 사진일 때만 켠다. */
@@ -1678,7 +1696,8 @@
                 if (!m || !m.setDoc || !window.db || !user?.uid) return;
                 const w = String(word || '').toLowerCase();
                 const text = String(meaning || '').trim();
-                if (!w.match(/^[a-z]{2,40}$/) || !text || text.length > 200) return;
+                // 낱말 하나든 숙어든 받는다. 문서 이름으로도 쓰이므로 쓸 수 있는 글자만 남긴다.
+                if (!w.match(/^[a-z][a-z '~-]{1,59}$/) || !text || text.length > 200) return;
                 if ((window.VOCAB_DICT || {})[w]) return;   // 이미 뜻이 있으면 표를 던질 이유가 없다
                 try {
                     await m.setDoc(
@@ -1742,15 +1761,16 @@
                     }
 
                     const res = vocabBuildFound(entries, true);
-                    setFound(res.list); setDropped(res.dropped);
+                    const withIdioms = vocabWithIdioms(res.list, String((data && data.text) || ''));
+                    setFound(withIdioms); setDropped(res.dropped);
 
                     // 사전에 뜻이 있고 아직 안 담은 단어는 미리 골라 둔다
                     const pre = {};
-                    res.list.forEach(it => { if (!it.easy && it.meaning && !savedSet.has(it.word)) pre[it.word] = true; });
+                    withIdioms.forEach(it => { if (!it.easy && it.meaning && !savedSet.has(it.word)) pre[it.word] = true; });
                     setPicked(pre);
 
-                    if (!res.list.length) showToast("사진에서 영어 단어를 찾지 못했습니다. 글자가 크고 또렷하게 나오도록 다시 찍거나, '직접 입력'으로 쳐 넣어보세요.", "error");
-                    else showToast(`영어 단어 ${res.list.length}개를 찾았습니다.`);
+                    if (!withIdioms.length) showToast("사진에서 영어 단어를 찾지 못했습니다. 글자가 크고 또렷하게 나오도록 다시 찍거나, '직접 입력'으로 쳐 넣어보세요.", "error");
+                    else showToast(`영어 단어 ${withIdioms.length}개를 찾았습니다.`);
                 } catch (err) {
                     showToast("사진에서 글자를 읽지 못했습니다. 다른 사진으로 시도해 주세요.", "error");
                 } finally {
@@ -1769,21 +1789,25 @@
 
                 setDrafts({}); setDropped(0);
                 const res = vocabBuildFound(tokens.map(t => ({ t: t, conf: 100 })), false);
-                setFound(res.list);
+                const list = vocabWithIdioms(res.list, rawText);
+                setFound(list);
 
                 // 몇 개 안 되거나 전부 쉬운 단어면, 숨김을 꺼서 눈에 보이게 한다
-                if (res.list.length <= 5 || res.list.every(f => f.easy)) setHideEasy(false);
+                if (list.length <= 5 || list.every(f => f.easy)) setHideEasy(false);
 
-                // 짧게 친 것은 통째로 골라 두고, 지문은 어려운 단어만 골라 둔다
-                const pickAll = res.list.length <= 5;
+                // 짧게 친 것은 통째로 골라 두고, 지문은 어려운 것만 골라 둔다
+                const pickAll = list.length <= 5;
                 const pre = {};
-                res.list.forEach(it => {
+                list.forEach(it => {
                     if (savedSet.has(it.word)) return;
                     if (pickAll || (!it.easy && it.meaning)) pre[it.word] = true;
                 });
                 setPicked(pre);
 
-                showToast(`영어 단어 ${res.list.length}개를 찾았습니다.`);
+                const nIdiom = list.filter(f => f.idiom).length;
+                showToast(nIdiom
+                    ? `영어 단어 ${list.length}개를 찾았습니다. (숙어 ${nIdiom}개 포함)`
+                    : `영어 단어 ${list.length}개를 찾았습니다.`);
             };
 
             const togglePick = (w) => setPicked(prev => {
@@ -2067,6 +2091,7 @@
                                                                 : {}}>
                                                     {already && <i className="fa-solid fa-check mr-1.5 text-[9px]"></i>}
                                                     {on && !already && <i className="fa-solid fa-plus mr-1.5 text-[9px]"></i>}
+                                                    {f.idiom && <i className="fa-solid fa-link mr-1.5 text-[9px]" style={{ color: 'var(--cyan-ink)' }}></i>}
                                                     <span className="font-mono">{f.word}</span>
                                                     {f.meaning && <span className="ml-1.5 font-semibold opacity-70">{f.meaning.split(',')[0]}</span>}
                                                     {!f.meaning && <span className="ml-1.5 font-semibold opacity-50">뜻 직접 입력</span>}
@@ -2103,11 +2128,13 @@
 
                                     <div className="mt-6 pt-5 border-t flex flex-wrap items-center justify-between gap-3"
                                          style={{ borderColor: 'var(--line)' }}>
-                                        <span className="text-xs font-bold" style={{ color: 'var(--txt-faint)' }}>
+                                        {/* 개수는 오른쪽 단추에도 적혀 있다.
+                                            좁은 화면에서는 왼쪽 아래 캐릭터에 가려지기만 해서 접는다. */}
+                                        <span className="text-xs font-bold hidden sm:inline" style={{ color: 'var(--txt-faint)' }}>
                                             {pickedCount}개 선택됨
                                         </span>
                                         <button onClick={savePicked} disabled={saving || pickedCount === 0}
-                                                className="btn btn-primary font-bold px-6 py-3 rounded-2xl text-sm flex items-center gap-2"
+                                                className="btn btn-primary font-bold px-6 py-3 rounded-2xl text-sm flex items-center gap-2 ml-auto"
                                                 style={pickedCount === 0 ? { opacity: .5 } : {}}>
                                             <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-download'}`}></i>
                                             {saving ? '담는 중' : `${pickedCount}개 단어장에 담기`}
@@ -4810,7 +4837,7 @@
 
                     {/* ── 푸터 ───────────────────────────── */}
                     <footer className="border-t mt-6" style={{ borderColor: 'var(--line)' }}>
-                        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 flex flex-col sm:flex-row items-center justify-between gap-5">
+                        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-8 pb-24 flex flex-col sm:flex-row items-center justify-between gap-5">
                             <div className="flex items-center gap-3">
                                 <Mark size={28} />
                                 <div>
