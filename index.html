@@ -781,6 +781,25 @@
         .rounded-xl  { border-radius: 12px !important; }
 
         .reveal, .reveal-x { animation-duration: .22s !important; }
+
+        /* 좁은 화면의 메인 탭.
+           여섯 칸을 한 줄에 욱여넣으면 칸이 55px 남짓인데
+           아이콘과 세 글자를 가로로 늘어놓으면 70px 을 넘겨 서로 밀어낸다.
+           아이콘을 글씨 위로 올려 쌓으면 넉넉히 들어간다. */
+        @media (max-width: 640px) {
+            .seg-btn {
+                display: flex !important;
+                flex-direction: column !important;
+                align-items: center !important;
+                justify-content: center !important;
+                gap: 3px !important;
+                padding: .48rem .1rem !important;
+                font-size: .66rem !important;
+                line-height: 1.1 !important;
+                letter-spacing: -.02em !important;
+            }
+            .seg-btn i { margin-right: 0 !important; font-size: 12px !important; }
+        }
     </style>
     <script>
         // 첫 페인트 전에 테마를 적용해 깜빡임을 없앤다.
@@ -807,7 +826,9 @@
             createUserWithEmailAndPassword, signInWithEmailAndPassword, signOut,
             sendEmailVerification, sendPasswordResetEmail, reload
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, addDoc, onSnapshot, writeBatch } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
+         doc, getDoc, setDoc, updateDoc, deleteDoc, collection, addDoc, onSnapshot, writeBatch, getDocs,
+         query, orderBy, limit, documentId } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
 
         const firebaseConfig = {
@@ -821,7 +842,20 @@
 
         try {
             const app = initializeApp(firebaseConfig);
-            const db = getFirestore(app);
+
+            /* 브라우저에 한 벌 캐시해 둔다.
+
+               이게 없으면 새로고침할 때마다 전교생 명단과 자료 목록을 통째로 다시 받는다.
+               캐시가 있으면 바뀐 문서만 받으므로 읽기 횟수가 확 준다.
+               사생활 보호 모드처럼 캐시를 못 쓰는 곳에서는 조용히 예전 방식으로 돌아간다. */
+            let db;
+            try {
+                db = initializeFirestore(app, {
+                    localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() })
+                });
+            } catch (e) {
+                db = getFirestore(app);
+            }
             const auth = getAuth(app);
             const storage = getStorage(app);
 
@@ -846,6 +880,11 @@
                 addDoc,
                 onSnapshot,
                 writeBatch,
+                getDocs,
+                query,
+                orderBy,
+                limit,
+                documentId,
                 ref,
                 uploadBytesResumable,
                 getDownloadURL,
@@ -1421,13 +1460,152 @@
            ───────────────────────────────────────────────────────────── */
         const vocabPath = (uid) => ['artifacts', window.appId, 'public', 'data', 'users', uid, 'vocab'];
 
+        /* ── 사진 다듬기 ───────────────────────────────────────
+           휴대폰 사진을 그대로 넣으면 인식률이 뚝 떨어진다.
+           글자를 키우고, 흑백으로 바꾸고, 명암을 끝까지 편 뒤에 넘긴다.
+           ─────────────────────────────────────────────────── */
+        const OCR_LONG_MIN = 1600;   // 이보다 작으면 키운다
+        const OCR_LONG_MAX = 2400;   // 이보다 크면 줄인다
+
+        const vocabPrepImage = async (file) => {
+            let src;
+            try {
+                src = await createImageBitmap(file, { imageOrientation: 'from-image' });
+            } catch (e) {
+                src = await new Promise((res, rej) => {
+                    const im = new Image();
+                    const u = URL.createObjectURL(file);
+                    im.onload  = () => { URL.revokeObjectURL(u); res(im); };
+                    im.onerror = () => { URL.revokeObjectURL(u); rej(new Error('load')); };
+                    im.src = u;
+                });
+            }
+
+            const iw = src.width, ih = src.height;
+            const long = Math.max(iw, ih);
+            let k = 1;
+            if (long < OCR_LONG_MIN) k = Math.min(3, OCR_LONG_MIN / long);
+            else if (long > OCR_LONG_MAX) k = OCR_LONG_MAX / long;
+
+            const w = Math.max(1, Math.round(iw * k));
+            const h = Math.max(1, Math.round(ih * k));
+            const cv = document.createElement('canvas');
+            cv.width = w; cv.height = h;
+            const cx = cv.getContext('2d', { willReadFrequently: true });
+            cx.imageSmoothingQuality = 'high';
+            cx.drawImage(src, 0, 0, w, h);
+            if (src.close) src.close();
+
+            const img = cx.getImageData(0, 0, w, h);
+            const p = img.data;
+
+            const hist = new Uint32Array(256);
+            for (let i = 0; i < p.length; i += 4) {
+                const g = (p[i] * 0.299 + p[i + 1] * 0.587 + p[i + 2] * 0.114) | 0;
+                p[i] = p[i + 1] = p[i + 2] = g;
+                hist[g]++;
+            }
+
+            // 위아래 2% 를 잘라 명암을 끝까지 편다. 그늘진 사진에 특히 잘 듣는다.
+            const total = w * h;
+            let lo = 0, hi = 255, acc = 0;
+            for (let v = 0; v < 256; v++)   { acc += hist[v]; if (acc > total * 0.02) { lo = v; break; } }
+            acc = 0;
+            for (let v = 255; v >= 0; v--)  { acc += hist[v]; if (acc > total * 0.02) { hi = v; break; } }
+            const span = Math.max(1, hi - lo);
+
+            for (let i = 0; i < p.length; i += 4) {
+                let g = ((p[i] - lo) * 255) / span;
+                g = g < 0 ? 0 : g > 255 ? 255 : g;
+                p[i] = p[i + 1] = p[i + 2] = g;
+            }
+            cx.putImageData(img, 0, 0);
+            return cv;
+        };
+
+        /* 인식기는 한 번만 켜 둔다. 사진마다 새로 켜면 언어 데이터를 매번 내려받는다. */
+        let vocabWorker = null, vocabWorkerReady = null, vocabLogger = null;
+
+        const vocabGetWorker = () => {
+            if (vocabWorker) return Promise.resolve(vocabWorker);
+            if (!vocabWorkerReady) {
+                vocabWorkerReady = window.Tesseract
+                    .createWorker('eng', 1, { logger: (m) => { if (vocabLogger) vocabLogger(m); } })
+                    .then((w) => { vocabWorker = w; return w; })
+                    .catch((e) => { vocabWorkerReady = null; throw e; });
+            }
+            return vocabWorkerReady;
+        };
+
+        /* 인식 결과에서 낱말을 꺼낸다. 판마다 담긴 자리가 달라 둘 다 훑는다. */
+        const vocabWordsOf = (data) => {
+            if (!data) return [];
+            if (Array.isArray(data.words) && data.words.length) return data.words;
+            const out = [];
+            (data.blocks || []).forEach(b =>
+                (b.paragraphs || []).forEach(p =>
+                    (p.lines || []).forEach(l =>
+                        (l.words || []).forEach(w => out.push(w)))));
+            return out;
+        };
+
+        /* 영어 낱말처럼 보이는가 — 인식이 뭉갠 찌꺼기를 걸러낸다 */
+        const vocabLooksEnglish = (t) => {
+            if (t.length < 3 || t.length > 18) return false;
+            if (!/[aeiouy]/.test(t)) return false;                 // 모음이 하나도 없다
+            if (/(.)\1\1/.test(t)) return false;                   // 같은 글자가 세 번 잇달아
+            if (/[bcdfghjklmnpqrstvwxz]{5}/.test(t)) return false; // 자음만 다섯 개
+            return true;
+        };
+
+        /* 낱말 목록 → 화면에 뿌릴 후보.
+           사전에 있으면 제대로 읽힌 것으로 본다 (사전과 맞아떨어지는 건 우연이 아니다).
+           사전에 없으면 또렷하게 읽힌 것만 남긴다. strict 는 사진일 때만 켠다. */
+        const vocabBuildFound = (entries, strict) => {
+            const seen = new Map();
+            let dropped = 0;
+
+            entries.forEach((en) => {
+                const t = en.t, conf = en.conf;
+                const hit = window.vocabLookup(t);
+
+                if (!hit) {
+                    if (strict && (conf < 75 || !vocabLooksEnglish(t))) { dropped++; return; }
+                } else if (strict) {
+                    // 파생으로 겨우 이어 붙인 뜻은 증거가 약하다.
+                    // early 를 carly 로 잘못 읽으면 -ly 를 떼어 car(자동차) 에 가 닿는다.
+                    // 확신도로는 못 거른다 — 잘못 읽고도 96점을 주는 일이 있다.
+                    // 짧은 낱말일수록 그렇게 헛짚기 쉬우니, 파생은 여섯 글자부터 받는다.
+                    if (hit.via === 'derive') {
+                        if (t.length < 6 || conf < 60) { dropped++; return; }
+                    } else if (conf < 45) { dropped++; return; }
+                }
+
+                const base = hit ? hit.base : t;
+                const prev = seen.get(base);
+                if (prev) { if (conf > prev.conf) prev.conf = conf; return; }
+                seen.set(base, {
+                    word: base,
+                    meaning: hit ? hit.meaning : '',
+                    easy: window.vocabIsEasy(base),
+                    conf: conf
+                });
+            });
+
+            // 어려운 단어를 앞에, 그 안에서는 알파벳순으로
+            const list = Array.from(seen.values()).sort((a, b) =>
+                a.easy === b.easy ? a.word.localeCompare(b.word) : (a.easy ? 1 : -1)
+            );
+            return { list: list, dropped: dropped };
+        };
+
         const VOCAB_TABS = [
-            { key: 'scan', label: '사진에서 담기', icon: 'fa-camera' },
+            { key: 'scan', label: '단어 담기', icon: 'fa-camera' },
             { key: 'list', label: '내 단어장',     icon: 'fa-list' },
             { key: 'quiz', label: '암기하기',      icon: 'fa-layer-group' }
         ];
 
-        const VocabPage = ({ user, showToast, requireVerified }) => {
+        const VocabPage = ({ user, showToast, requireVerified, sharedCount = 0 }) => {
             const [mode, setMode] = useState('scan');
             const [words, setWords] = useState([]);
             const [loading, setLoading] = useState(true);
@@ -1442,6 +1620,12 @@
             const [hideEasy, setHideEasy] = useState(true);
             const [saving, setSaving] = useState(false);
             const fileRef = useRef(null);
+
+            // 사진 대신 직접 쳐 넣는 길
+            const [source, setSource] = useState('photo');   // 'photo' | 'text'
+            const [rawText, setRawText] = useState('');
+            const [drafts, setDrafts] = useState({});        // 사전에 없는 단어에 붙일 뜻
+            const [dropped, setDropped] = useState(0);       // 찌꺼기로 걸러낸 개수
 
             // 내 단어장
             const [query, setQuery] = useState('');
@@ -1474,6 +1658,28 @@
                 return () => { try { unsub && unsub(); } catch (e) {} };
             }, [user?.uid]);
 
+            /* 사전에 없던 낱말에 뜻을 적으면 한 표를 던진다.
+
+               같은 뜻을 적은 친구가 한 명 더 생기면 그 낱말은 공유 사전으로 올라가고,
+               표는 그때 지워진다. 문서 이름에만 잠깐 학생 번호가 들어갈 뿐,
+               공유 사전에는 누가 적었는지 남지 않는다.
+
+               표는 덤이다. 실패해도 내 단어장에 담는 일은 이미 끝나 있다. */
+            const voteMeaning = async (word, meaning) => {
+                const m = fm();
+                if (!m || !m.setDoc || !window.db || !user?.uid) return;
+                const w = String(word || '').toLowerCase();
+                const text = String(meaning || '').trim();
+                if (!w.match(/^[a-z]{2,40}$/) || !text || text.length > 200) return;
+                if ((window.VOCAB_DICT || {})[w]) return;   // 이미 뜻이 있으면 표를 던질 이유가 없다
+                try {
+                    await m.setDoc(
+                        m.doc(window.db, 'artifacts', window.appId, 'public', 'data', 'vocab_votes', user.uid + '_' + w),
+                        { word: w, meaning: text, norm: window.vocabNormMeaning(text), at: Date.now() }
+                    );
+                } catch (e) {}
+            };
+
             /* 미리보기로 만든 blob URL 은 반드시 되돌려준다 */
             useEffect(() => () => { if (imgUrl) URL.revokeObjectURL(imgUrl); }, [imgUrl]);
 
@@ -1490,50 +1696,86 @@
 
                 if (imgUrl) URL.revokeObjectURL(imgUrl);
                 setImgUrl(URL.createObjectURL(file));
-                setFound([]); setPicked({});
-                setOcrBusy(true); setOcrProgress(0); setOcrStage('사진을 읽는 중');
+                setFound([]); setPicked({}); setDrafts({}); setDropped(0);
+                setOcrBusy(true); setOcrProgress(0); setOcrStage('사진을 다듬는 중');
+
+                // 인식기는 함께 쓰므로, 진행률은 지금 화면으로 이어 준다
+                vocabLogger = (m) => {
+                    if (m.status === 'loading language traineddata') setOcrStage('영어 인식 데이터 준비 중');
+                    else if (m.status === 'recognizing text') setOcrStage('글자를 알아보는 중');
+                    if (typeof m.progress === 'number') setOcrProgress(Math.round(m.progress * 100));
+                };
 
                 try {
-                    const res = await window.Tesseract.recognize(file, 'eng', {
-                        logger: (m) => {
-                            if (m.status === 'loading language traineddata') setOcrStage('영어 인식 데이터 준비 중');
-                            else if (m.status === 'recognizing text') setOcrStage('글자를 알아보는 중');
-                            if (typeof m.progress === 'number') setOcrProgress(Math.round(m.progress * 100));
-                        }
-                    });
-                    const text = (res && res.data && res.data.text) || '';
-                    const tokens = text.toLowerCase().match(/[a-z]{3,}/g) || [];
+                    const canvas = await vocabPrepImage(file);
+                    setOcrStage('글자를 알아보는 중');
 
-                    const seen = new Map();
-                    tokens.forEach((t) => {
-                        const hit = window.vocabLookup(t);
-                        const base = hit ? hit.base : t;
-                        if (seen.has(base)) return;
-                        seen.set(base, {
-                            word: base,
-                            meaning: hit ? hit.meaning : '',
-                            easy: window.vocabIsEasy(base)
+                    let data;
+                    try {
+                        const worker = await vocabGetWorker();
+                        data = (await worker.recognize(canvas)).data;
+                    } catch (e2) {
+                        // 인식기를 따로 못 켜면, 한 번 쓰고 버리는 방식으로 되돌아간다
+                        data = (await window.Tesseract.recognize(canvas, 'eng', { logger: vocabLogger })).data;
+                    }
+
+                    // 낱말마다 확신도가 붙어 나온다. 없으면 글 전체에서 긁어낸다.
+                    const words = vocabWordsOf(data);
+                    let entries = [];
+                    if (words.length) {
+                        words.forEach((w) => {
+                            const conf = typeof w.confidence === 'number' ? w.confidence : 0;
+                            const parts = String(w.text || '').toLowerCase().match(/[a-z]+/g) || [];
+                            parts.forEach(t => { if (t.length >= 3) entries.push({ t: t, conf: conf }); });
                         });
-                    });
+                    } else {
+                        entries = (String((data && data.text) || '').toLowerCase().match(/[a-z]{3,}/g) || [])
+                                    .map(t => ({ t: t, conf: 100 }));
+                    }
 
-                    // 어려운 단어를 앞에, 그 안에서는 알파벳순으로
-                    const list = Array.from(seen.values()).sort((a, b) =>
-                        a.easy === b.easy ? a.word.localeCompare(b.word) : (a.easy ? 1 : -1)
-                    );
-                    setFound(list);
+                    const res = vocabBuildFound(entries, true);
+                    setFound(res.list); setDropped(res.dropped);
 
                     // 사전에 뜻이 있고 아직 안 담은 단어는 미리 골라 둔다
                     const pre = {};
-                    list.forEach(it => { if (!it.easy && it.meaning && !savedSet.has(it.word)) pre[it.word] = true; });
+                    res.list.forEach(it => { if (!it.easy && it.meaning && !savedSet.has(it.word)) pre[it.word] = true; });
                     setPicked(pre);
 
-                    if (!list.length) showToast("사진에서 영어 단어를 찾지 못했습니다. 더 밝고 또렷한 사진으로 시도해 보세요.", "error");
-                    else showToast(`영어 단어 ${list.length}개를 찾았습니다.`);
+                    if (!res.list.length) showToast("사진에서 영어 단어를 찾지 못했습니다. 글자가 크고 또렷하게 나오도록 다시 찍거나, '직접 입력'으로 쳐 넣어보세요.", "error");
+                    else showToast(`영어 단어 ${res.list.length}개를 찾았습니다.`);
                 } catch (err) {
                     showToast("사진에서 글자를 읽지 못했습니다. 다른 사진으로 시도해 주세요.", "error");
                 } finally {
+                    vocabLogger = null;
                     setOcrBusy(false); setOcrProgress(0); setOcrStage('');
                 }
+            };
+
+            /* ── 직접 쳐 넣은 글에서 단어 뽑기 ─────────────────
+               사람이 친 글자는 틀릴 일이 없으니 거르지 않는다.
+               단어 하나만 쳐도, 지문을 통째로 붙여넣어도 같은 길로 흐른다.
+               ─────────────────────────────────────────────── */
+            const handleScanText = () => {
+                const tokens = (rawText.toLowerCase().match(/[a-z]+/g) || []).filter(t => t.length >= 2);
+                if (!tokens.length) return showToast("영어 단어를 찾지 못했습니다. 영어로 적어주세요.", "error");
+
+                setDrafts({}); setDropped(0);
+                const res = vocabBuildFound(tokens.map(t => ({ t: t, conf: 100 })), false);
+                setFound(res.list);
+
+                // 몇 개 안 되거나 전부 쉬운 단어면, 숨김을 꺼서 눈에 보이게 한다
+                if (res.list.length <= 5 || res.list.every(f => f.easy)) setHideEasy(false);
+
+                // 짧게 친 것은 통째로 골라 두고, 지문은 어려운 단어만 골라 둔다
+                const pickAll = res.list.length <= 5;
+                const pre = {};
+                res.list.forEach(it => {
+                    if (savedSet.has(it.word)) return;
+                    if (pickAll || (!it.easy && it.meaning)) pre[it.word] = true;
+                });
+                setPicked(pre);
+
+                showToast(`영어 단어 ${res.list.length}개를 찾았습니다.`);
             };
 
             const togglePick = (w) => setPicked(prev => {
@@ -1544,6 +1786,7 @@
 
             const visibleFound = hideEasy ? found.filter(f => !f.easy) : found;
             const pickedCount = Object.keys(picked).length;
+            const needMeaning = found.filter(f => picked[f.word] && !f.meaning && !savedSet.has(f.word));
 
             /* ── 고른 단어를 단어장에 담기 ─────────────────────── */
             const savePicked = async () => {
@@ -1562,13 +1805,19 @@
                         const ref = m.doc(window.db, ...vocabPath(user.uid), it.word);
                         batch.set(ref, {
                             word: it.word,
-                            meaning: it.meaning || '',
+                            meaning: (it.meaning || drafts[it.word] || '').trim().slice(0, 200),
                             known: false,
                             createdAt: now
                         });
                     });
                     await batch.commit();
-                    setPicked({});
+
+                    // 손으로 적어 넣은 뜻은 공유 사전 후보로도 올려 둔다
+                    items.forEach((it) => {
+                        if (!it.meaning && drafts[it.word]) voteMeaning(it.word, drafts[it.word]);
+                    });
+
+                    setPicked({}); setDrafts({});
                     showToast(`${items.length}개를 단어장에 담았습니다.`);
                     setMode('list');
                 } catch (err) {
@@ -1587,6 +1836,7 @@
                 if (!m || !editWord || !user?.uid) return;
                 try {
                     await m.updateDoc(m.doc(window.db, ...vocabPath(user.uid), editWord.id), { meaning: editMeaning.trim() });
+                    voteMeaning(editWord.word, editMeaning);
                     setEditWord(null);
                     showToast("뜻을 저장했습니다.");
                 } catch (err) {
@@ -1629,7 +1879,7 @@
             /* ── 암기하기 ──────────────────────────────────────── */
             const startQuiz = (scope) => {
                 const pool = scope === 'unknown' ? words.filter(w => !w.known) : words;
-                if (!pool.length) return showToast("암기할 단어가 없습니다. 먼저 사진에서 단어를 담아보세요.", "error");
+                if (!pool.length) return showToast("암기할 단어가 없습니다. 먼저 '단어 담기'에서 단어를 담아보세요.", "error");
                 const shuffled = pool.slice();
                 for (let i = shuffled.length - 1; i > 0; i--) {
                     const j = Math.floor(Math.random() * (i + 1));
@@ -1669,6 +1919,11 @@
                                         아직 못 외운 단어 {unknownCount}개
                                     </span>
                                 </p>
+                                {sharedCount > 0 && (
+                                    <p className="text-[11px] mt-0.5" style={{ color: 'var(--txt-faint)' }}>
+                                        친구들이 채운 낱말 {sharedCount}개도 함께 쓰고 있어요
+                                    </p>
+                                )}
                             </div>
                         </div>
                         <div className="seg" style={{ gridTemplateColumns: `repeat(${VOCAB_TABS.length}, minmax(0,1fr))`, maxWidth: '360px' }}>
@@ -1687,10 +1942,38 @@
                     {mode === 'scan' && (
                         <div className="space-y-5">
                             <div className="glass rounded-3xl p-6 reveal d1">
-                                <input ref={fileRef} type="file" accept="image/*" capture="environment"
+                                <input ref={fileRef} type="file" accept="image/*"
                                        onChange={handlePickPhoto} className="hidden" />
 
-                                {!imgUrl && (
+                                {/* 찍어서 담을지, 쳐서 담을지 */}
+                                <div className="flex gap-2 mb-5">
+                                    {[['photo', '사진에서', 'fa-camera'], ['text', '직접 입력', 'fa-keyboard']].map(([k, label, icon]) => (
+                                        <button key={k} onClick={() => setSource(k)} className="chip" disabled={ocrBusy}
+                                                style={source === k ? { background: 'color-mix(in srgb, var(--lime) 16%, transparent)', borderColor: 'var(--lime)', color: 'var(--lime-ink)' } : {}}>
+                                            <i className={`fa-solid ${icon} mr-1.5 text-[10px]`}></i>{label}
+                                        </button>
+                                    ))}
+                                </div>
+
+                                {source === 'text' && (
+                                    <div className="space-y-3">
+                                        <textarea rows="6" value={rawText} onChange={(e) => setRawText(e.target.value)}
+                                                  placeholder="단어 하나만 쳐도 되고, 지문을 통째로 붙여넣어도 됩니다."
+                                                  className="fld" style={{ minHeight: '9rem', lineHeight: 1.7, resize: 'vertical' }}></textarea>
+                                        <div className="flex flex-wrap items-center justify-between gap-3">
+                                            <p className="text-[11px]" style={{ color: 'var(--txt-faint)' }}>
+                                                영어만 골라냅니다. 한글이 섞여 있어도 괜찮아요.
+                                            </p>
+                                            <button onClick={handleScanText} disabled={!rawText.trim()}
+                                                    className="btn btn-primary font-bold px-6 py-2.5 rounded-2xl text-sm flex items-center gap-2"
+                                                    style={!rawText.trim() ? { opacity: .5 } : {}}>
+                                                <i className="fa-solid fa-wand-magic-sparkles"></i>단어 찾기
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {source === 'photo' && !imgUrl && (
                                     <div className="text-center py-8">
                                         <div className="w-16 h-16 mx-auto mb-5 rounded-2xl grid place-items-center glass">
                                             <i className="fa-solid fa-camera text-2xl" style={{ color: 'var(--txt-faint)' }}></i>
@@ -1698,6 +1981,7 @@
                                         <p className="text-sm font-extrabold mb-1.5">교과서·문제집을 찍어서 올려보세요</p>
                                         <p className="text-xs leading-relaxed mb-6" style={{ color: 'var(--txt-faint)' }}>
                                             사진 속 영어 단어를 찾아 뜻을 붙여드립니다.<br />
+                                            글자가 크고 반듯하게 나오도록, 그늘 없이 찍으면 훨씬 잘 읽습니다.<br />
                                             사진은 서버에 저장되지 않고 이 기기 안에서만 처리됩니다.
                                         </p>
                                         <button onClick={() => fileRef.current && fileRef.current.click()} disabled={ocrBusy}
@@ -1707,7 +1991,7 @@
                                     </div>
                                 )}
 
-                                {imgUrl && (
+                                {source === 'photo' && imgUrl && (
                                     <div className="space-y-4">
                                         <div className="rounded-2xl overflow-hidden border" style={{ borderColor: 'var(--line)' }}>
                                             <img src={imgUrl} alt="올린 사진" className="w-full max-h-72 object-contain"
@@ -1745,6 +2029,11 @@
                                         <div>
                                             <div className="eyebrow text-[9px] mb-1">Found · {visibleFound.length} words</div>
                                             <p className="text-[13px] font-extrabold">담고 싶은 단어를 눌러 고르세요</p>
+                                            {dropped > 0 && (
+                                                <p className="text-[11px] mt-1" style={{ color: 'var(--txt-faint)' }}>
+                                                    잘못 읽힌 것 같은 {dropped}개는 뺐습니다. 찾던 단어가 없으면 '직접 입력'으로 쳐 넣어보세요.
+                                                </p>
+                                            )}
                                         </div>
                                         <button onClick={() => setHideEasy(!hideEasy)}
                                                 className={`chip ${hideEasy ? '' : 'opacity-60'}`}
@@ -1782,6 +2071,27 @@
                                             </p>
                                         )}
                                     </div>
+
+                                    {needMeaning.length > 0 && (
+                                        <div className="mt-6 pt-5 border-t" style={{ borderColor: 'var(--line)' }}>
+                                            <p className="text-[13px] font-extrabold">사전에 없는 단어예요</p>
+                                            <p className="text-[11px] mt-1 mb-3.5" style={{ color: 'var(--txt-faint)' }}>
+                                                뜻을 적어주세요. 비워두고 담아도 되고, 나중에 '내 단어장'에서 채워도 됩니다.<br />
+                                                같은 뜻을 적은 친구가 한 명 더 생기면 이 낱말은 모두의 사전에 들어갑니다.
+                                                누가 적었는지는 남지 않아요.
+                                            </p>
+                                            <div className="space-y-2.5">
+                                                {needMeaning.map((f) => (
+                                                    <div key={f.word} className="flex items-center gap-2.5">
+                                                        <span className="font-mono text-xs font-bold shrink-0" style={{ minWidth: '6.5rem' }}>{f.word}</span>
+                                                        <input type="text" placeholder="뜻" value={drafts[f.word] || ''} maxLength={200}
+                                                               onChange={(e) => setDrafts(prev => ({ ...prev, [f.word]: e.target.value }))}
+                                                               className="fld fld-sm flex-1" />
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
 
                                     <div className="mt-6 pt-5 border-t flex flex-wrap items-center justify-between gap-3"
                                          style={{ borderColor: 'var(--line)' }}>
@@ -1829,7 +2139,7 @@
                                 <div className="glass rounded-3xl">
                                     <EmptyState icon="fa-book-open"
                                                 title={words.length === 0 ? "아직 담은 단어가 없습니다" : "조건에 맞는 단어가 없습니다"}
-                                                desc={words.length === 0 ? "'사진에서 담기'에서 교과서를 찍어보세요." : "검색어나 필터를 바꿔보세요."} />
+                                                desc={words.length === 0 ? "'단어 담기'에서 사진을 찍거나 직접 쳐 넣어보세요." : "검색어나 필터를 바꿔보세요."} />
                                 </div>
                             ) : (
                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -2025,6 +2335,10 @@
             // 학습부가 미리 계산해 둔 응모 명단. 학생은 이것만 읽는다.
             const [pinballRoster, setPinballRoster] = useState(null);
             const [rosterBusy, setRosterBusy] = useState(false);
+            const [sharedVocabCount, setSharedVocabCount] = useState(0);
+            const [vocabSyncBusy, setVocabSyncBusy] = useState(false);
+            const [sharedVocabMap, setSharedVocabMap] = useState({});
+            const [vocabAdminQuery, setVocabAdminQuery] = useState("");
             const [pinballBusy, setPinballBusy] = useState(false);
 
             // 성장 캐릭터 — 이름은 학생이 직접 짓는다
@@ -2050,6 +2364,10 @@
             const [editNotice, setEditNotice] = useState(noticeText);
             const [ddaySettings, setDdaySettings] = useState({ csat: '2026-11-12', examName: '학교 행사', examDate: '2026-12-10' });
             const [editDday, setEditDday] = useState({ ...ddaySettings });
+            const [schedule, setSchedule] = useState([]);          // 1년 학사일정
+            const [editSchedule, setEditSchedule] = useState([]);
+            const [isScheduleOpen, setIsScheduleOpen] = useState(false);
+            const [scheduleYear, setScheduleYear] = useState(new Date().getFullYear());
 
             const [toast, setToast] = useState(null);
             const [customConfirm, setCustomConfirm] = useState(null);
@@ -2209,12 +2527,13 @@
                             // 리스너는 세션당 한 번만 연결한다.
                             if (profile.status === 'active' && !listenersStarted.current) {
                                 listenersStarted.current = true;
-                                listenToCloudMaterials();
-                                listenToCloudQna();
+                                listenToCloudMaterials(profile.rank || 1);
+                                listenToCloudQna(profile.rank || 1);
                                 listenToCloudSettings();
                                 listenToLiveStudyUsers();
                                 listenToCloudUsers();
                                 listenToPinballRoster();
+                                listenToSharedVocab();
                                 // 승인 기록 원본은 임원(rank 2)부터만 내려받는다.
                                 // «공부 시간 데이터» 창이 기간을 직접 재집계해야 해서 원본이 필요하다.
                                 // 일반 학생은 미리 계산된 명단만 읽으므로 남의 기록이 브라우저로 가지 않는다.
@@ -2297,9 +2616,23 @@
                 listenToStudyRecords();
             }, [user?.rank]);
 
-            const listenToCloudMaterials = () => {
+            /* 최근 것부터 정해진 수만큼만 받아 오는 질의를 만든다.
+               도구가 없는 옛 환경이나 시연용 껍데기에서는 컬렉션을 그대로 돌려준다. */
+            const recentQuery = (colRef, howMany, full) => {
+                const { query, orderBy, limit, documentId } = window.firebaseMethods || {};
+                if (full || !query || !orderBy || !limit || !documentId) return colRef;
+                try {
+                    return query(colRef, orderBy(documentId(), 'desc'), limit(howMany));
+                } catch (e) { return colRef; }
+            };
+
+            const MATERIALS_LIMIT = 300;
+            const QNA_LIMIT = 200;
+
+            const listenToCloudMaterials = (rank) => {
                 const { collection } = window.firebaseMethods; const onSnapshot = trackedOnSnapshot;
-                onSnapshot(collection(window.db, 'artifacts', window.appId, 'public', 'data', 'materials'), (snapshot) => {
+                const colRef = collection(window.db, 'artifacts', window.appId, 'public', 'data', 'materials');
+                onSnapshot(recentQuery(colRef, MATERIALS_LIMIT, (rank || 1) >= 3), (snapshot) => {
                     const cloudList = [];
                     snapshot.forEach((d) => { if(d.data()) cloudList.push({ ...d.data(), id: d.id }); });
                     cloudList.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
@@ -2307,9 +2640,10 @@
                 }, () => setIsLocalMode(true));
             };
 
-            const listenToCloudQna = () => {
+            const listenToCloudQna = (rank) => {
                 const { collection } = window.firebaseMethods; const onSnapshot = trackedOnSnapshot;
-                onSnapshot(collection(window.db, 'artifacts', window.appId, 'public', 'data', 'qna'), (snapshot) => {
+                const colRef = collection(window.db, 'artifacts', window.appId, 'public', 'data', 'qna');
+                onSnapshot(recentQuery(colRef, QNA_LIMIT, (rank || 1) >= 3), (snapshot) => {
                     const qList = [];
                     snapshot.forEach((d) => { if(d.data()) qList.push({ ...d.data(), id: d.id }); });
                     qList.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
@@ -2325,7 +2659,21 @@
                         if (data.dday) { setDdaySettings(data.dday); setEditDday(data.dday); }
                         if (data.notice !== undefined) { setNoticeText(data.notice); setEditNotice(data.notice); }
                         if (data.pinball) { setPinballSettings(data.pinball); setEditPinball(data.pinball); }
+                        if (Array.isArray(data.schedule)) { setSchedule(data.schedule); setEditSchedule(data.schedule); }
                     }
+                });
+            };
+
+            /* 학생들이 채운 낱말을 받아 사전에 얹는다.
+               낱말 하나에 문서 하나씩 두면 접속할 때마다 낱말 수만큼 읽게 된다.
+               그래서 전부 문서 하나에 담아 두고 여기서 한 번만 읽는다. */
+            const listenToSharedVocab = () => {
+                const { doc } = window.firebaseMethods;
+                const onSnapshot = trackedOnSnapshot;
+                onSnapshot(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'settings', 'vocabShared'), (docSnap) => {
+                    const words = (docSnap.exists() && docSnap.data() && docSnap.data().words) || {};
+                    setSharedVocabMap(words);
+                    setSharedVocabCount(window.vocabAddShared ? window.vocabAddShared(words) : 0);
                 });
             };
 
@@ -2754,7 +3102,8 @@
                     const { ref, uploadBytesResumable, getDownloadURL, doc, setDoc } = window.firebaseMethods;
                     const storage = window.storage;
                     const safeFileName = `proof_${recordId}_${studyProofFile.name}`;
-                    const fileRef = ref(storage, `study_proofs/${safeFileName}`);
+                    const proofPath = `study_proofs/${safeFileName}`;
+                    const fileRef = ref(storage, proofPath);
                     const uploadTask = uploadBytesResumable(fileRef, studyProofFile);
 
                     uploadTask.on('state_changed',
@@ -2772,6 +3121,8 @@
                                 grade: user.grade,
                                 durationMins: recordedMins,
                                 proofUrl: downloadUrl,
+                                // 나중에 기록을 지울 때 사진도 같이 지우려면 경로가 필요하다
+                                proofPath: proofPath,
                                 status: "pending",
                                 date: new Date().toISOString().split('T')[0],
                                 timestamp: Date.now()
@@ -2797,10 +3148,35 @@
                 if (action === "approved" && !targetUid) {
                     return triggerAlert("이 기록은 예전 형식이라 대상 계정을 특정할 수 없습니다.\n반려 후 재제출을 안내해 주세요.");
                 }
-                const { doc, updateDoc, getDoc } = window.firebaseMethods;
+                const { doc, updateDoc, getDoc, ref, deleteObject } = window.firebaseMethods;
 
                 try {
-                    await updateDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'study_records', recordId), { status: action });
+                    /* 확인이 끝난 사진은 지운다.
+                       안 지우면 하루 100MB 씩 저장소에 쌓여 요금이 계속 나간다.
+
+                       지우기부터 하고, 성공했을 때만 주소를 비운다.
+                       못 지웠는데 주소까지 지우면 아무도 못 찾는 파일이 되어
+                       요금만 계속 나가는 신세가 된다. */
+                    const rec = (studyRecords || []).find(r => r && r.id === recordId);
+                    const spot = rec && (rec.proofPath || rec.proofUrl);
+                    let photoGone = false;
+                    if (spot && ref && deleteObject && window.storage) {
+                        try {
+                            await deleteObject(ref(window.storage, spot));
+                            photoGone = true;
+                        } catch (e1) {
+                            // 이미 지워진 사진이면 주소만 비워도 된다
+                            if (e1 && e1.code === 'storage/object-not-found') photoGone = true;
+                        }
+                    } else if (!spot) {
+                        photoGone = true;   // 지울 사진이 애초에 없다
+                    }
+
+                    const patch = photoGone
+                        ? { status: action, proofUrl: '', proofPath: '' }
+                        : { status: action };
+
+                    await updateDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'study_records', recordId), patch);
 
                     if (action === "approved") {
                         // 누적 시간 갱신이 실패해도 명단은 반드시 다시 올려야 하므로
@@ -2818,6 +3194,13 @@
                         }
                     } else {
                         showToast("사진 불충분으로 기록을 반려 처리했습니다.");
+                    }
+
+                    if (spot && !photoGone) {
+                        triggerAlert(
+                            '처리는 끝났지만 인증 사진을 지우지 못했습니다.\n\n' +
+                            '저장소에 남아 요금이 계속 나갑니다.\n파이어베이스 콘솔의 Storage 에서 확인해 주세요.',
+                            '사진이 남았습니다');
                     }
 
                     // 응모 명단을 다시 올린다. 구독 반영을 기다리지 않도록
@@ -3057,13 +3440,58 @@
 
             const handleAdminSettingsSave = async (e) => {
                 e.preventDefault();
+
+                // 날짜순으로 정리하고, 날짜나 제목이 빈 줄은 버린다
+                const cleaned = (editSchedule || [])
+                    .filter(it => it && it.date && String(it.title || '').trim())
+                    .map(it => ({ id: it.id || String(Date.now()) + Math.random().toString(36).slice(2, 6),
+                                  date: it.date, title: String(it.title).trim().slice(0, 60),
+                                  kind: it.kind || '행사' }))
+                    .sort((a, b) => a.date.localeCompare(b.date));
+
                 setDdaySettings(editDday);
                 setNoticeText(editNotice);
+                setSchedule(cleaned);
+                setEditSchedule(cleaned);
+
                 if (!isLocalMode && window.firebaseMethods) {
-                    try { await window.firebaseMethods.setDoc(window.firebaseMethods.doc(window.db, 'artifacts', window.appId, 'public', 'data', 'settings', 'config'), { dday: editDday, notice: editNotice }); } catch (err) {}
+                    const { doc, setDoc } = window.firebaseMethods;
+                    try {
+                        // merge 를 빠뜨리면 핀볼 설정처럼 여기서 안 건드리는 값이 통째로 날아간다.
+                        await setDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'settings', 'config'),
+                                     { dday: editDday, notice: editNotice, schedule: cleaned }, { merge: true });
+                    } catch (err) {
+                        triggerAlert('저장에 실패했습니다. 권한과 네트워크를 확인해 주세요.');
+                        return;
+                    }
                 }
                 showToast("업데이트되었습니다!");
                 setIsAdminConsoleOpen(false);
+            };
+
+            /* ── 학사일정 다루기 ────────────────────────────── */
+            const SCHEDULE_KINDS = ['시험', '행사', '방학', '휴일', '기타'];
+
+            const scheduleAddRow = () => setEditSchedule(prev => ([
+                ...(prev || []),
+                { id: String(Date.now()) + Math.random().toString(36).slice(2, 6),
+                  date: '', title: '', kind: '행사' }
+            ]));
+
+            const scheduleSetRow = (id, patch) =>
+                setEditSchedule(prev => (prev || []).map(it => it.id === id ? { ...it, ...patch } : it));
+
+            const scheduleDropRow = (id) =>
+                setEditSchedule(prev => (prev || []).filter(it => it.id !== id));
+
+            /* 오늘을 기준으로 남은 날을 센다. 지난 일정은 음수가 된다. */
+            const daysUntil = (ymd) => {
+                if (!ymd) return null;
+                const t = new Date(ymd + 'T00:00:00').getTime();
+                if (isNaN(t)) return null;
+                const now = new Date();
+                const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+                return Math.round((t - today) / 86400000);
             };
 
             const isPdfOrImage = (filename) => {
@@ -3142,6 +3570,124 @@
                     });
                     return true;
                 } catch (err) { return false; }
+            };
+
+            /* 학생들이 던진 표를 훑어, 두 명 이상이 같은 뜻을 적은 낱말을 공유 사전에 올린다.
+
+               표 문서 이름은 '{학생번호}_{낱말}' 이라 한 사람이 같은 낱말에 두 표를 못 던진다.
+               그래서 같은 묶음에 표가 둘이면 그것만으로 서로 다른 두 사람이다 —
+               누가 적었는지 들여다볼 필요가 없다.
+               올린 표는 지운다. 공유 사전에는 뜻만 남고 누구인지는 남지 않는다. */
+            const syncSharedVocab = async (quiet) => {
+                if ((user?.rank || 1) < 3 || !window.firebaseMethods || isLocalMode) return null;
+                const { collection, getDocs, doc, getDoc, setDoc, writeBatch } = window.firebaseMethods;
+                if (!getDocs) return null;
+
+                const votePath = ['artifacts', window.appId, 'public', 'data', 'vocab_votes'];
+                try {
+                    const snap = await getDocs(collection(window.db, ...votePath));
+
+                    // 낱말 + 뜻꼴로 표를 모은다
+                    const box = new Map();
+                    snap.forEach((d) => {
+                        const v = d.data() || {};
+                        if (!v.word || !v.norm || !v.meaning) return;
+                        const key = v.word + '|' + v.norm;
+                        if (!box.has(key)) box.set(key, { word: v.word, text: v.meaning, ids: [] });
+                        box.get(key).ids.push(d.id);
+                    });
+
+                    const sharedRef = doc(window.db, 'artifacts', window.appId, 'public', 'data', 'settings', 'vocabShared');
+                    const cur = await getDoc(sharedRef);
+                    const words = Object.assign({}, (cur.exists() && cur.data() && cur.data().words) || {});
+
+                    const agreed = [];
+                    box.forEach((e) => { if (e.ids.length >= 2) agreed.push(e); });
+
+                    const added = [];
+                    agreed.forEach((e) => { if (!words[e.word]) { words[e.word] = e.text; added.push(e.word); } });
+
+                    // 이미 오른 낱말에 매달린 표는 더 볼 이유가 없다
+                    const done = new Set(agreed.map(e => e.word));
+                    const trash = [];
+                    box.forEach((e) => { if (done.has(e.word)) e.ids.forEach(id => trash.push(id)); });
+
+                    if (!added.length && !trash.length) {
+                        if (!quiet) showToast('새로 합의된 낱말이 없습니다.');
+                        return 0;
+                    }
+
+                    if (added.length) {
+                        await setDoc(sharedRef, { words, count: Object.keys(words).length, updatedAt: Date.now() });
+                    }
+
+                    // 한 번에 500개까지만 지울 수 있어 끊어서 보낸다
+                    for (let i = 0; i < trash.length; i += 400) {
+                        const batch = writeBatch(window.db);
+                        trash.slice(i, i + 400).forEach(id => batch.delete(doc(window.db, ...votePath, id)));
+                        await batch.commit();
+                    }
+
+                    if (!quiet && added.length) showToast(`낱말 ${added.length}개를 공유 사전에 올렸습니다.`);
+                    else if (!quiet) showToast('표를 정리했습니다.');
+                    return added.length;
+                } catch (err) {
+                    if (!quiet) triggerAlert('공유 사전을 정리하지 못했습니다. 권한과 네트워크를 확인해 주세요.');
+                    return null;
+                }
+            };
+
+            const sharedVocabList = Object.keys(sharedVocabMap).sort();
+
+            const sharedVocabFiltered = (() => {
+                const q = vocabAdminQuery.trim().toLowerCase();
+                const rows = sharedVocabList.map(w => [w, sharedVocabMap[w]]);
+                if (!q) return rows.slice(0, 300);
+                return rows.filter(([w, m]) => w.includes(q) || String(m || '').toLowerCase().includes(q)).slice(0, 300);
+            })();
+
+            /* 올라온 뜻을 고치거나 지운다.
+               학생 화면은 이 문서 하나만 읽으므로, 여기서 고치면 모두에게 곧바로 반영된다. */
+            const writeSharedVocab = async (words) => {
+                const { doc, setDoc } = window.firebaseMethods;
+                await setDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'settings', 'vocabShared'),
+                             { words, count: Object.keys(words).length, updatedAt: Date.now() });
+            };
+
+            const handleSharedVocabEdit = async (word, text) => {
+                if ((user?.rank || 1) < 3 || !window.firebaseMethods || isLocalMode) return;
+                const t = String(text || '').trim().slice(0, 200);
+                if (t === (sharedVocabMap[word] || '')) return;
+                if (!t) return handleSharedVocabDelete(word);
+                try {
+                    await writeSharedVocab(Object.assign({}, sharedVocabMap, { [word]: t }));
+                    showToast(`${word} 의 뜻을 고쳤습니다.`);
+                } catch (err) { triggerAlert('뜻을 고치지 못했습니다.'); }
+            };
+
+            const handleSharedVocabDelete = async (word) => {
+                if ((user?.rank || 1) < 3 || !window.firebaseMethods || isLocalMode) return;
+                const next = Object.assign({}, sharedVocabMap);
+                delete next[word];
+                try {
+                    await writeSharedVocab(next);
+                    showToast(`${word} 을(를) 공유 사전에서 뺐습니다.`);
+                } catch (err) { triggerAlert('낱말을 빼지 못했습니다.'); }
+            };
+
+            /* 학습부가 사이트를 열면 조용히 한 번 훑는다.
+               따로 누르지 않아도 합의된 낱말이 하루 안에는 올라간다. */
+            useEffect(() => {
+                if ((user?.rank || 1) < 3) return;
+                const t = setTimeout(() => { syncSharedVocab(true); }, 4000);
+                return () => clearTimeout(t);
+            }, [user?.rank, user?.uid]);
+
+            const handleSharedVocabSync = async () => {
+                if ((user?.rank || 1) < 3) return;
+                setVocabSyncBusy(true);
+                await syncSharedVocab(false);
+                setVocabSyncBusy(false);
             };
 
             const handleRosterRefresh = async () => {
@@ -3308,7 +3854,7 @@
 
                                 <p className="mt-5 text-[15px] leading-relaxed reveal d5" style={{ color: 'var(--txt-dim)' }}>
                                     타이머를 켜면 지금 공부 중인 친구들이 보입니다.<br />
-                                    자료는 학년·과목별로 정리되어 있고, 막히면 바로 물어보면 돼요.
+                                    자료는 학년·과목별로 정리되어 있고, 필요한 건 요구사항으로 알려주면 돼요.
                                 </p>
 
                                 <div className="flex flex-wrap gap-2.5 mt-10 reveal d6">
@@ -3559,8 +4105,25 @@
 
             const doResetHours = async (targets, alsoTotals) => {
                 setResetBusy(true); setResetProgress(1);
+                let photoFailed = 0;
                 try {
-                    await bulkDelete('study_records', targets.map(r => r.id), setResetProgress);
+                    /* 사진부터 지운다.
+                       기록을 먼저 지우면 사진 주소를 잃어버려 영영 못 찾는 파일이 된다.
+                       예전 기록에는 경로가 없으므로 내려받기 주소로 대신 가리킨다. */
+                    const { ref, deleteObject } = window.firebaseMethods;
+                    if (ref && deleteObject && window.storage) {
+                        const spots = targets
+                            .map(r => r && (r.proofPath || r.proofUrl))
+                            .filter(Boolean);
+                        for (let i = 0; i < spots.length; i += 20) {
+                            await Promise.all(spots.slice(i, i + 20).map(p =>
+                                deleteObject(ref(window.storage, p)).catch(() => { photoFailed++; })));
+                            setResetProgress(Math.round((i / Math.max(1, spots.length)) * 40));
+                        }
+                    }
+
+                    await bulkDelete('study_records', targets.map(r => r.id),
+                                     (p) => setResetProgress(40 + Math.round(p * 0.6)));
 
                     let failed = 0;
                     if (alsoTotals) {
@@ -3585,8 +4148,14 @@
                             `기록 ${targets.length}건은 지웠지만, 학생 ${failed}명의 누적 시간은 서버가 막았습니다.\n\n` +
                             '누적 시간 초기화는 최고 관리자 계정으로만 됩니다.\n그 계정으로 다시 시도해 주세요.',
                             '일부만 처리되었습니다');
+                    } else if (photoFailed > 0) {
+                        triggerAlert(
+                            `기록 ${targets.length}건을 지웠습니다.\n\n` +
+                            `다만 인증 사진 ${photoFailed}장은 지우지 못했습니다.\n` +
+                            '저장소에 남아 요금이 계속 나가니, 파이어베이스 콘솔의 Storage 에서 확인해 주세요.',
+                            '사진 일부가 남았습니다');
                     } else {
-                        showToast(`기록 ${targets.length}건을 정리했습니다.`);
+                        showToast(`기록 ${targets.length}건과 인증 사진을 정리했습니다.`);
                     }
                 } catch (err) {
                     triggerAlert('정리 중 오류가 났습니다. 일부만 지워졌을 수 있으니 건수를 다시 확인해 주세요.');
@@ -3701,7 +4270,7 @@
                     </header>
 
                     {/* ── 공지 & D-Day 티커 ──────────────── */}
-                    {(noticeText || (ddaySettings && (ddaySettings.csat || ddaySettings.examDate))) && (
+                    {(noticeText || (schedule || []).length > 0 || (ddaySettings && (ddaySettings.csat || ddaySettings.examDate))) && (
                         <div className="border-b" style={{ borderColor: 'var(--line)', background: 'color-mix(in srgb, var(--lime) 6%, transparent)' }}>
                             <div className="max-w-7xl mx-auto py-2.5 px-4 sm:px-6 lg:px-8 flex flex-col sm:flex-row sm:items-center gap-3">
                                 {noticeText && (
@@ -3721,7 +4290,14 @@
                                         )}
                                     </div>
                                 )}
-                                <div className="flex items-center gap-2 shrink-0">
+                                <div className="flex items-center gap-2 shrink-0 flex-wrap">
+                                    {(schedule || []).length > 0 && (
+                                        <button type="button" onClick={() => setIsScheduleOpen(true)}
+                                                className="glass rounded-xl px-3 py-1.5 flex items-center gap-2 text-[11px] font-bold lift">
+                                            <i className="fa-regular fa-calendar text-[10px]" style={{ color: 'var(--cyan-ink)' }}></i>
+                                            <span style={{ color: 'var(--txt-dim)' }}>학사일정</span>
+                                        </button>
+                                    )}
                                     {ddaySettings?.csat && (
                                         <span className="glass rounded-xl px-3 py-1.5 flex items-center gap-2 text-[11px] font-bold lift">
                                             <span style={{ color: 'var(--txt-faint)' }}>수능</span>
@@ -3738,6 +4314,107 @@
                             </div>
                         </div>
                     )}
+
+                    {/* ── 학사일정 창 ────────────────────── */}
+                    {isScheduleOpen && (() => {
+                        const all = (schedule || []).slice().sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+                        const years = Array.from(new Set(all.map(it => (it.date || '').slice(0, 4)).filter(Boolean))).sort();
+                        const pick = years.includes(String(scheduleYear)) ? String(scheduleYear) : (years[years.length - 1] || String(scheduleYear));
+                        const rows = all.filter(it => (it.date || '').startsWith(pick));
+
+                        // 달별로 묶는다
+                        const months = [];
+                        rows.forEach((it) => {
+                            const m = (it.date || '').slice(5, 7);
+                            let g = months.find(x => x.m === m);
+                            if (!g) { g = { m, items: [] }; months.push(g); }
+                            g.items.push(it);
+                        });
+
+                        const nextUp = all.find(it => (daysUntil(it.date) ?? -1) >= 0);
+                        const tone = { '시험': 'var(--rose)', '방학': 'var(--cyan-ink)', '휴일': 'var(--cyan-ink)',
+                                       '행사': 'var(--brand-dp)', '기타': 'var(--txt-faint)' };
+
+                        return (
+                            <div className="modal-bd fixed inset-0 z-50 flex items-center justify-center p-4"
+                                 onClick={() => setIsScheduleOpen(false)}>
+                                <div className="modal-card glass-solid w-full max-w-2xl overflow-hidden"
+                                     onClick={(e) => e.stopPropagation()}>
+
+                                    <div className="p-5 sm:p-6 flex items-start justify-between gap-3 border-b" style={{ borderColor: 'var(--line)' }}>
+                                        <div className="min-w-0">
+                                            <div className="eyebrow text-[9px] mb-1">Calendar</div>
+                                            <h3 className="text-lg font-extrabold tracking-tight">학사일정</h3>
+                                            {nextUp && (
+                                                <p className="text-[11px] mt-1.5" style={{ color: 'var(--txt-dim)' }}>
+                                                    다음 일정은 <b>{nextUp.title}</b>,
+                                                    <b className="ml-1" style={{ color: 'var(--brand-dp)' }}>
+                                                        {daysUntil(nextUp.date) === 0
+                                                            ? '오늘'
+                                                            : <><span className="font-mono">{daysUntil(nextUp.date)}</span>일 뒤</>}
+                                                    </b>
+                                                </p>
+                                            )}
+                                        </div>
+                                        <button onClick={() => setIsScheduleOpen(false)} className="icon-btn shrink-0" title="닫기">
+                                            <i className="fa-solid fa-xmark"></i>
+                                        </button>
+                                    </div>
+
+                                    {years.length > 1 && (
+                                        <div className="px-5 sm:px-6 pt-4 flex gap-2 flex-wrap">
+                                            {years.map(y => (
+                                                <button key={y} onClick={() => setScheduleYear(Number(y))}
+                                                        className="chip"
+                                                        style={y === pick ? { background: 'color-mix(in srgb, var(--lime) 16%, transparent)', borderColor: 'var(--lime)', color: 'var(--lime-ink)' } : {}}>
+                                                    {y}년
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+
+                                    <div className="p-5 sm:p-6 space-y-5 max-h-[60vh] overflow-y-auto">
+                                        {months.map(g => (
+                                            <div key={g.m}>
+                                                <div className="eyebrow text-[9px] mb-2.5">{Number(g.m)}월</div>
+                                                <div className="space-y-1.5">
+                                                    {g.items.map((it) => {
+                                                        const left = daysUntil(it.date);
+                                                        const gone = left !== null && left < 0;
+                                                        return (
+                                                            <div key={it.id || it.date + it.title}
+                                                                 className="flex items-center gap-3 py-2 px-3 rounded-xl"
+                                                                 style={{ background: 'var(--surface-2)', opacity: gone ? .45 : 1 }}>
+                                                                <span className="text-[11px] font-extrabold shrink-0"
+                                                                      style={{ minWidth: '2.6rem', color: 'var(--txt-faint)' }}>
+                                                                    <span className="font-mono">{Number((it.date || '').slice(8, 10))}</span>일
+                                                                </span>
+                                                                <span className="tag shrink-0"
+                                                                      style={{ background: 'transparent', border: '1px solid var(--line)',
+                                                                               color: tone[it.kind] || 'var(--txt-faint)' }}>
+                                                                    {it.kind || '행사'}
+                                                                </span>
+                                                                <span className="text-xs font-bold flex-1 min-w-0 truncate">{it.title}</span>
+                                                                {!gone && left !== null && (
+                                                                    <span className="font-mono text-[10px] font-extrabold shrink-0"
+                                                                          style={{ color: left === 0 ? 'var(--rose)' : 'var(--txt-faint)' }}>
+                                                                        {left === 0 ? '오늘' : `D-${left}`}
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                            </div>
+                                        ))}
+                                        {rows.length === 0 && (
+                                            <EmptyState icon="fa-calendar" title="이 해에 넣은 일정이 없습니다" />
+                                        )}
+                                    </div>
+                                </div>
+                            </div>
+                        );
+                    })()}
 
                     {/* ── 이메일 인증 안내 ───────────────── */}
                     {!emailVerified && (
@@ -4016,7 +4693,7 @@
                         {/* ── 학습 자료실 ────────────────── */}
                         {/* ── 영어 단어장 ────────────────── */}
                         {activeMainTab === 'vocab' && (
-                            <VocabPage user={user} showToast={showToast} requireVerified={requireVerified} />
+                            <VocabPage user={user} showToast={showToast} requireVerified={requireVerified} sharedCount={sharedVocabCount} />
                         )}
 
                         {activeMainTab === 'materials' && (
@@ -4120,7 +4797,7 @@
                                             ))}
                                         </ul>
                                     ) : (
-                                        <EmptyState icon="fa-circle-question" title="조건에 맞는 게시글이 없습니다" desc="궁금한 걸 먼저 물어보세요." />
+                                        <EmptyState icon="fa-circle-question" title="조건에 맞는 게시글이 없습니다" desc="필요한 걸 먼저 올려보세요." />
                                     )}
                                 </div>
                             </div>
@@ -4495,6 +5172,11 @@
                                             </button>
                                         )}
                                         {currentUserRank >= 3 && (
+                                            <button onClick={() => setAdminTab("vocab")} className={`chip ${adminTab === 'vocab' ? 'on' : ''} whitespace-nowrap`}>
+                                                📖 공유 사전
+                                            </button>
+                                        )}
+                                        {currentUserRank >= 3 && (
                                             <button onClick={() => setAdminTab("study")} className={`chip ${adminTab === 'study' ? 'on' : ''} whitespace-nowrap`}>
                                                 <i className="fa-solid fa-check-double mr-1"></i>학습 인증 승인 ({(studyRecords || []).filter(r => r && r.status === 'pending').length})
                                             </button>
@@ -4506,24 +5188,71 @@
                                     <form onSubmit={handleAdminSettingsSave} className="p-6 space-y-5 max-h-[70vh] overflow-y-auto reveal">
                                         <div>
                                             <label className="eyebrow text-[9px] block mb-2.5">상단 공지 수정</label>
-                                            <textarea value={editNotice || ''} onChange={(e) => setEditNotice(e.target.value)} rows="2" className="fld text-xs" required></textarea>
+                                            <textarea value={editNotice || ''} onChange={(e) => setEditNotice(e.target.value)} rows="2"
+                                                      placeholder="비워 두면 위쪽 공지줄에 아무것도 안 뜹니다."
+                                                      className="fld text-xs"></textarea>
                                         </div>
                                         <div className="divider"></div>
                                         <div>
                                             <label className="eyebrow text-[9px] block mb-2.5">수능 날짜</label>
-                                            <input type="date" value={editDday?.csat || ''} onChange={(e)=>setEditDday({...editDday, csat: e.target.value})} className="fld text-xs" required />
+                                            <input type="date" value={editDday?.csat || ''} onChange={(e)=>setEditDday({...editDday, csat: e.target.value})} className="fld text-xs" />
                                         </div>
                                         <div className="divider"></div>
                                         <div className="grid sm:grid-cols-2 gap-3">
                                             <div>
                                                 <label className="eyebrow text-[9px] block mb-2.5">행사 이름</label>
-                                                <input type="text" value={editDday?.examName || ''} onChange={(e)=>setEditDday({...editDday, examName: e.target.value})} className="fld text-xs" required />
+                                                <input type="text" value={editDday?.examName || ''} onChange={(e)=>setEditDday({...editDday, examName: e.target.value})} className="fld text-xs" />
                                             </div>
                                             <div>
                                                 <label className="eyebrow text-[9px] block mb-2.5">행사 날짜</label>
-                                                <input type="date" value={editDday?.examDate || ''} onChange={(e)=>setEditDday({...editDday, examDate: e.target.value})} className="fld text-xs" required />
+                                                <input type="date" value={editDday?.examDate || ''} onChange={(e)=>setEditDday({...editDday, examDate: e.target.value})} className="fld text-xs" />
                                             </div>
                                         </div>
+                                        <div className="divider"></div>
+
+                                        {/* 1년 학사일정.
+                                            settings/config 안에 배열로 들어가므로 읽기가 늘지 않는다. */}
+                                        <div>
+                                            <div className="flex items-center justify-between gap-3 mb-2.5">
+                                                <label className="eyebrow text-[9px]">학사일정 · {(editSchedule || []).length}건</label>
+                                                <button type="button" onClick={scheduleAddRow}
+                                                        className="btn btn-ghost px-3 py-1.5 rounded-lg text-[10px] font-bold">
+                                                    <i className="fa-solid fa-plus mr-1.5"></i>일정 추가
+                                                </button>
+                                            </div>
+
+                                            <p className="text-[11px] mb-3" style={{ color: 'var(--txt-faint)' }}>
+                                                날짜와 이름만 적으면 됩니다. 저장할 때 날짜순으로 정리되고, 빈 줄은 버려집니다.
+                                            </p>
+
+                                            <div className="space-y-2">
+                                                {(editSchedule || []).map((it) => (
+                                                    <div key={it.id} className="glass rounded-xl p-2.5 flex flex-wrap items-center gap-2">
+                                                        <input type="date" value={it.date || ''}
+                                                               onChange={(e) => scheduleSetRow(it.id, { date: e.target.value })}
+                                                               className="fld fld-sm text-[11px] w-auto shrink-0" />
+                                                        <select value={it.kind || '행사'}
+                                                                onChange={(e) => scheduleSetRow(it.id, { kind: e.target.value })}
+                                                                className="fld fld-sm text-[11px] w-auto shrink-0">
+                                                            {SCHEDULE_KINDS.map(k => <option key={k} value={k}>{k}</option>)}
+                                                        </select>
+                                                        <input type="text" value={it.title || ''} maxLength={60}
+                                                               placeholder="일정 이름 (예: 1학기 기말고사)"
+                                                               onChange={(e) => scheduleSetRow(it.id, { title: e.target.value })}
+                                                               className="fld fld-sm text-[11px] flex-1" style={{ minWidth: '10rem' }} />
+                                                        <button type="button" onClick={() => scheduleDropRow(it.id)}
+                                                                className="btn btn-ghost px-2.5 py-1.5 rounded-lg text-[10px] font-bold shrink-0"
+                                                                style={{ color: 'var(--rose)' }}>빼기</button>
+                                                    </div>
+                                                ))}
+                                                {(editSchedule || []).length === 0 && (
+                                                    <p className="text-[11px] py-5 text-center" style={{ color: 'var(--txt-faint)' }}>
+                                                        아직 넣은 일정이 없습니다. '일정 추가'를 눌러보세요.
+                                                    </p>
+                                                )}
+                                            </div>
+                                        </div>
+
                                         <button type="submit" className="btn btn-primary w-full font-bold py-3.5 rounded-2xl text-sm">설정 즉시 저장</button>
                                     </form>
                                 )}
@@ -4670,6 +5399,55 @@
                                                 </div>
                                             ))}
                                             {filteredDisplayUsers.length === 0 && <EmptyState icon="fa-user-slash" title="검색 결과가 없습니다" />}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {adminTab === "vocab" && currentUserRank >= 3 && (
+                                    <div className="p-6 space-y-5 max-h-[70vh] overflow-y-auto reveal">
+
+                                        {/* 학생이 적은 뜻은 곧바로 퍼지지 않는다.
+                                            같은 뜻을 적은 사람이 둘이 되어야 여기 올라온다.
+                                            올라온 뒤에는 누가 적었는지 알 수 없다 — 표를 지우기 때문이다. */}
+                                        <div className="glass rounded-2xl p-4 flex items-center justify-between gap-3">
+                                            <div className="min-w-0">
+                                                <div className="eyebrow text-[9px] mb-1">공유 사전</div>
+                                                <p className="text-[11px]" style={{ color: 'var(--txt-faint)' }}>
+                                                    학생들이 채운 낱말 {sharedVocabList.length}개.
+                                                    두 명이 같은 뜻을 적으면 올라옵니다.
+                                                </p>
+                                            </div>
+                                            <button type="button" onClick={handleSharedVocabSync} disabled={vocabSyncBusy}
+                                                    className="btn btn-ghost px-3.5 py-2 rounded-xl text-[10px] font-bold shrink-0">
+                                                <i className="fa-solid fa-rotate mr-1.5"></i>{vocabSyncBusy ? '확인 중...' : '지금 반영'}
+                                            </button>
+                                        </div>
+
+                                        <div className="w-full relative">
+                                            <span className="absolute inset-y-0 left-0 flex items-center pl-4" style={{ color: 'var(--txt-faint)' }}>
+                                                <i className="fa-solid fa-magnifying-glass text-xs"></i>
+                                            </span>
+                                            <input type="text" placeholder="낱말이나 뜻으로 검색" value={vocabAdminQuery}
+                                                   onChange={(e) => setVocabAdminQuery(e.target.value)} className="fld fld-sm pl-11" />
+                                        </div>
+
+                                        <div className="space-y-2">
+                                            {sharedVocabFiltered.map(([w, meaning]) => (
+                                                <div key={w} className="glass rounded-xl p-3 flex items-center gap-2.5">
+                                                    <span className="font-mono text-xs font-extrabold shrink-0" style={{ minWidth: '7rem' }}>{w}</span>
+                                                    <input type="text" defaultValue={meaning} maxLength={200}
+                                                           onBlur={(e) => handleSharedVocabEdit(w, e.target.value)}
+                                                           className="fld fld-sm flex-1" />
+                                                    <button type="button" onClick={() => handleSharedVocabDelete(w)}
+                                                            className="btn btn-ghost px-3 py-1.5 rounded-lg text-[10px] font-bold shrink-0"
+                                                            style={{ color: 'var(--rose)' }}>지우기</button>
+                                                </div>
+                                            ))}
+                                            {sharedVocabFiltered.length === 0 && (
+                                                <EmptyState icon="fa-book-open"
+                                                    title={sharedVocabList.length === 0 ? "아직 올라온 낱말이 없습니다" : "검색 결과가 없습니다"}
+                                                    desc={sharedVocabList.length === 0 ? "학생 두 명이 같은 뜻을 적으면 여기에 쌓입니다." : null} />
+                                            )}
                                         </div>
                                     </div>
                                 )}
