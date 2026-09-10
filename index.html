@@ -782,6 +782,10 @@
 
         .reveal, .reveal-x { animation-duration: .22s !important; }
 
+        /* 알들이 한꺼번에 같은 박자로 움직이면 기계 같다.
+           바깥 상자에 준 지연을 안쪽 몸통이 그대로 물려받게 해 하나씩 어긋나게 둔다. */
+        .egg-nest > div .pet-body { animation-delay: inherit; }
+
         /* 좁은 화면의 메인 탭.
            여섯 칸을 한 줄에 욱여넣으면 칸이 55px 남짓인데
            아이콘과 세 글자를 가로로 늘어놓으면 70px 을 넘겨 서로 밀어낸다.
@@ -1083,6 +1087,10 @@
         // 캐릭터 번호. 평소에는 uid 로 정해지지만, 관리자가 petId 를 지정하면
         // 그 값이 우선한다. (문제가 생겼을 때 손으로 바로잡기 위한 장치)
         const PET_NAMES = ['새싹', '물방울', '별', '긴목', '날개', '꼬리', '긴다리', '펭귄', '강아지', '고양이'];
+
+        /* 로그인 화면에 알들을 줄 세울 때 쓰는 높이 차이.
+           일정하게 놓으면 진열대 같고, 조금씩 어긋나야 모여 있는 것처럼 보인다. */
+        const EGG_LIFT = [0, -8, 3, -11, 1, -6, 5, -9, 2, -4];
 
         const petIndexOf = (uid, petId) =>
             (Number.isInteger(petId) && petId >= 0 && petId < PETS.length) ? petId : petIndexFromUid(uid);
@@ -3852,23 +3860,19 @@
                                     {BRAND}
                                 </h1>
 
-                                <p className="mt-5 text-[15px] leading-relaxed reveal d5" style={{ color: 'var(--txt-dim)' }}>
-                                    타이머를 켜면 지금 공부 중인 친구들이 보입니다.<br />
-                                    자료는 학년·과목별로 정리되어 있고, 필요한 건 요구사항으로 알려주면 돼요.
-                                </p>
-
-                                <div className="flex flex-wrap gap-2.5 mt-10 reveal d6">
-                                    {[
-                                        { i: 'fa-stopwatch',      t: '자습 타이머',  d: '켜는 순간 기록 시작', c: 'var(--lime-ink)' },
-                                        { i: 'fa-folder-open',    t: '학습 자료실',  d: '선배 정리 노트까지',  c: 'var(--cyan-ink)' },
-                                        { i: 'fa-trophy',         t: '명예의 전당',  d: '이번 주 1등은 누구',  c: 'var(--pink-ink)' }
-                                    ].map(f => (
-                                        <div key={f.t} className="glass rounded-2xl px-4 py-3.5 flex items-center gap-3 lift">
-                                            <i className={`fa-solid ${f.i} text-sm`} style={{ color: f.c }}></i>
-                                            <div>
-                                                <div className="text-xs font-extrabold">{f.t}</div>
-                                                <div className="text-[10px] mt-0.5" style={{ color: 'var(--txt-faint)' }}>{f.d}</div>
-                                            </div>
+                                {/* 열 마리 모두 알로 옹기종기.
+                                    무슨 사이트인지 말로 설명하는 대신 얼굴을 보여 준다.
+                                    로그인 전에는 서버에서 아무것도 못 읽으므로(규칙이 막는다) 그림이 제일 낫다. */}
+                                <div className="egg-nest flex items-end mt-10 reveal d5" aria-hidden="true">
+                                    {PETS.map((_, i) => (
+                                        <div key={i} className="shrink-0"
+                                             style={{
+                                                 marginLeft: i === 0 ? 0 : '-14px',
+                                                 zIndex: i % 2 ? 1 : 2,
+                                                 transform: `translateY(${EGG_LIFT[i]}px)`,
+                                                 animationDelay: `${(-i * 0.37).toFixed(2)}s`
+                                             }}>
+                                            <Pet petId={i} mins={0} size={54} ground={false} />
                                         </div>
                                     ))}
                                 </div>
