@@ -1440,101 +1440,219 @@ window.VOCAB_EASY = new Set(("a about above after again against all also always 
 "why will wish with without woman word work world would write year yes yet you young your").split(" "));
 
 /* ─────────────────────────────────────────────────────────────
-   표제어 찾기.
-   OCR 은 'abandoned' 를 주지만 사전에는 'abandon' 만 있다.
-   복수형·과거형·-ing 를 벗겨 가며 사전을 두드려 본다.
+   낱말의 원형 찾기.
+
+   두 갈래로 나눠 다룬다.
+
+   · 굴절 — achieved · achieves · achieving 은 achieve 와 같은 말이다.
+     단어장에는 원형 하나로 모아 담는다.
+   · 파생 — movement 는 move 에서 나왔지만 다른 말이다.
+     뜻은 원형에서 빌려 오되, 단어장에는 학생이 본 그대로 담는다.
+
+   그래서 moving 을 담으면 move 가, movement 를 담으면 movement 가 남는다.
    ───────────────────────────────────────────────────────────── */
-window.vocabBaseForms = function (raw) {
-    const w = String(raw || "").toLowerCase().replace(/[^a-z]/g, "");
-    if (!w) return [];
 
-    // 꼬리 하나를 벗겨 나올 수 있는 후보들
-    const strip = (x) => {
-        const c = [];
-        const add = (s) => { if (s && s.length >= 2) c.push(s); };
+/* 규칙으로는 되돌릴 수 없는 굴절형 */
+window.VOCAB_IRREGULAR = {
+"am":"be","is":"be","are":"be","was":"be","were":"be","been":"be",
+"has":"have","had":"have","does":"do","did":"do","done":"do",
+"went":"go","gone":"go","made":"make","said":"say","saw":"see","seen":"see",
+"took":"take","taken":"take","came":"come","got":"get","gotten":"get",
+"gave":"give","given":"give","found":"find","thought":"think","told":"tell",
+"became":"become","left":"leave","felt":"feel","brought":"bring",
+"began":"begin","begun":"begin","kept":"keep","held":"hold",
+"wrote":"write","written":"write","stood":"stand","heard":"hear",
+"meant":"mean","met":"meet","ran":"run","paid":"pay","sat":"sit",
+"spoke":"speak","spoken":"speak","led":"lead","grew":"grow","grown":"grow",
+"lost":"lose","fell":"fall","fallen":"fall","sent":"send","built":"build",
+"understood":"understand","drew":"draw","drawn":"draw",
+"broke":"break","broken":"break","spent":"spend","rose":"rise","risen":"rise",
+"drove":"drive","driven":"drive","bought":"buy","wore":"wear","worn":"wear",
+"chose":"choose","chosen":"choose","taught":"teach","caught":"catch",
+"ate":"eat","eaten":"eat","sold":"sell","threw":"throw","thrown":"throw",
+"flew":"fly","flown":"fly","knew":"know","known":"know",
+"forgot":"forget","forgotten":"forget","blew":"blow","blown":"blow",
+"swam":"swim","swum":"swim","sang":"sing","sung":"sing",
+"drank":"drink","drunk":"drink","rang":"ring","rung":"ring",
+"slept":"sleep","hid":"hide","hidden":"hide","shot":"shoot",
+"struck":"strike","stuck":"stick","won":"win","laid":"lay",
+"dealt":"deal","slid":"slide","bit":"bite","bitten":"bite",
+"rode":"ride","ridden":"ride","shook":"shake","shaken":"shake",
+"stole":"steal","stolen":"steal","tore":"tear","torn":"tear",
+"froze":"freeze","frozen":"freeze","arose":"arise","arisen":"arise",
+"bore":"bear","borne":"bear","beaten":"beat","bent":"bend","bound":"bind",
+"bled":"bleed","bred":"breed","dug":"dig","fed":"feed","fought":"fight",
+"fled":"flee","forbade":"forbid","forbidden":"forbid",
+"forgave":"forgive","forgiven":"forgive","hung":"hang","knelt":"kneel",
+"lent":"lend","lit":"light","sank":"sink","sunk":"sink","sought":"seek",
+"shone":"shine","shrank":"shrink","shrunk":"shrink","sped":"speed",
+"spun":"spin","sprang":"spring","sprung":"spring","strove":"strive",
+"swept":"sweep","swore":"swear","sworn":"swear","swung":"swing",
+"wept":"weep","withdrew":"withdraw","withdrawn":"withdraw",
+"woke":"wake","woken":"wake","wound":"wind","lain":"lie",
 
-        // 복수형·3인칭 단수
-        if (x.endsWith("ies") && x.length > 4) add(x.slice(0, -3) + "y");
-        if (x.endsWith("es")  && x.length > 3) { add(x.slice(0, -2)); add(x.slice(0, -1)); }
-        if (x.endsWith("s")   && !x.endsWith("ss") && x.length > 3) add(x.slice(0, -1));
+"children":"child","women":"woman","men":"man","feet":"foot","teeth":"tooth",
+"mice":"mouse","geese":"goose","oxen":"ox","lives":"life","knives":"knife",
+"wives":"wife","leaves":"leaf","wolves":"wolf","shelves":"shelf",
+"halves":"half","calves":"calf","thieves":"thief","loaves":"loaf",
+"selves":"self","criteria":"criterion","phenomena":"phenomenon",
+"media":"medium","analyses":"analysis","bases":"basis","crises":"crisis",
+"theses":"thesis","hypotheses":"hypothesis","indices":"index",
+"matrices":"matrix","appendices":"appendix","curricula":"curriculum",
+"bacteria":"bacterium","fungi":"fungus","cacti":"cactus",
+"alumni":"alumnus","stimuli":"stimulus","radii":"radius","formulae":"formula",
 
-        // 과거형·과거분사
-        if (x.endsWith("ied") && x.length > 4) add(x.slice(0, -3) + "y");
-        if (x.endsWith("ed")  && x.length > 3) {
-            add(x.slice(0, -2));        // walked  → walk
-            add(x.slice(0, -1));        // used    → use
-            add(x.slice(0, -3));        // stopped → stop  (자음 중복)
-        }
+"better":"good","best":"good","worse":"bad","worst":"bad",
+"further":"far","furthest":"far","farther":"far","farthest":"far",
+"elder":"old","eldest":"old"
+};
 
-        // 진행형·동명사
-        if (x.endsWith("ing") && x.length > 4) {
-            add(x.slice(0, -3));        // walking → walk
-            add(x.slice(0, -3) + "e");  // making  → make
-            add(x.slice(0, -4));        // running → run
-        }
+var _vocabPush = function (c, s) { if (s && s.length >= 2 && c.indexOf(s) === -1) c.push(s); };
 
-        // 파생형 꼬리
-        if (x.endsWith("ily")  && x.length > 4) add(x.slice(0, -3) + "y");
-        if (x.endsWith("ly")   && x.length > 4) add(x.slice(0, -2));
-        if (x.endsWith("er")   && x.length > 4) { add(x.slice(0, -2)); add(x.slice(0, -1)); }
-        if (x.endsWith("est")  && x.length > 5) { add(x.slice(0, -3)); add(x.slice(0, -2)); }
-        if (x.endsWith("ness") && x.length > 6) add(x.slice(0, -4));
-        if (x.endsWith("ment") && x.length > 6) add(x.slice(0, -4));
-        if (x.endsWith("ful")  && x.length > 5) add(x.slice(0, -3));
-        if (x.endsWith("less") && x.length > 6) add(x.slice(0, -4));
-        if (x.endsWith("ance") && x.length > 6) { add(x.slice(0, -4)); add(x.slice(0, -4) + "e"); }
-        if (x.endsWith("ence") && x.length > 6) { add(x.slice(0, -4)); add(x.slice(0, -4) + "e"); }
-        if (x.endsWith("tion") && x.length > 6) { add(x.slice(0, -3) + "e"); add(x.slice(0, -4)); }
-        if (x.endsWith("sion") && x.length > 6) { add(x.slice(0, -4) + "d"); add(x.slice(0, -3) + "e"); }
-        if (x.endsWith("ive")  && x.length > 5) { add(x.slice(0, -3)); add(x.slice(0, -3) + "e"); }
-        if (x.endsWith("al")   && x.length > 5) add(x.slice(0, -2));
-        if (x.endsWith("ity")  && x.length > 5) add(x.slice(0, -3) + "e");
+/* 굴절 꼬리 한 겹 벗기기 — 복수 · 시제 · 진행 */
+window.vocabInflectForms = function (x) {
+    var c = [], add = function (s) { _vocabPush(c, s); };
+    var irr = window.VOCAB_IRREGULAR[x];
+    if (irr) add(irr);
 
-        // 꼬리를 자르는 것만으로는 안 되고 어미를 갈아끼워야 하는 것들
-        if (x.endsWith("bility") && x.length > 7) add(x.slice(0, -6) + "ble");   // responsibility → responsible
-        if (x.endsWith("sion")   && x.length > 6) add(x.slice(0, -4) + "de");    // decision       → decide
-        if (x.endsWith("itive")  && x.length > 6) add(x.slice(0, -6) + "te");    // competitive    → compete
-        if (x.endsWith("ation")  && x.length > 6) {
-            add(x.slice(0, -5));                                                  // information    → inform
-            add(x.slice(0, -5) + "ate");                                          // creation       → create
-        }
-        return c;
-    };
+    if (x.endsWith("ies")  && x.length > 4) add(x.slice(0, -3) + "y");
+    if (x.endsWith("ves")  && x.length > 4) { add(x.slice(0, -3) + "f"); add(x.slice(0, -3) + "fe"); }
+    if (x.endsWith("es")   && x.length > 3) { add(x.slice(0, -2)); add(x.slice(0, -1)); }
+    if (x.endsWith("s") && !x.endsWith("ss") && x.length > 3) add(x.slice(0, -1));
 
-    // 'achievements' 처럼 꼬리가 두 겹인 단어가 있어 두 번까지 벗긴다.
-    // (achievements → achievement → achieve)
-    const out = [w];
-    let frontier = [w];
-    for (let round = 0; round < 2; round++) {
-        const next = [];
-        frontier.forEach((x) => {
-            strip(x).forEach((cand) => {
-                if (out.indexOf(cand) === -1) { out.push(cand); next.push(cand); }
+    if (x.endsWith("ied")  && x.length > 4) add(x.slice(0, -3) + "y");
+    if (x.endsWith("ed")   && x.length > 3) { add(x.slice(0, -2)); add(x.slice(0, -1)); add(x.slice(0, -3)); }
+
+    if (x.endsWith("ying") && x.length > 4) add(x.slice(0, -4) + "ie");
+    if (x.endsWith("ing")  && x.length > 4) { add(x.slice(0, -3)); add(x.slice(0, -3) + "e"); add(x.slice(0, -4)); }
+    return c;
+};
+
+/* 파생 꼬리 한 겹 벗기기 — 뜻만 빌려 올 자리 */
+window.vocabDeriveForms = function (x) {
+    var c = [], add = function (s) { _vocabPush(c, s); };
+    var L = x.length;
+
+    // 어찌씨
+    if (x.endsWith("bly")   && L > 4) add(x.slice(0, -3) + "ble");
+    if (x.endsWith("ily")   && L > 4) add(x.slice(0, -3) + "y");
+    if (x.endsWith("ly")    && L > 4) add(x.slice(0, -2));
+
+    // 사람 · 견주기
+    if (x.endsWith("ier")   && L > 4) add(x.slice(0, -3) + "y");
+    if (x.endsWith("iest")  && L > 5) add(x.slice(0, -4) + "y");
+    if (x.endsWith("er")    && L > 4) { add(x.slice(0, -2)); add(x.slice(0, -1)); add(x.slice(0, -3)); }
+    if (x.endsWith("est")   && L > 5) { add(x.slice(0, -3)); add(x.slice(0, -2)); add(x.slice(0, -4)); }
+    if (x.endsWith("or")    && L > 5) { add(x.slice(0, -2)); add(x.slice(0, -2) + "e"); }
+    if (x.endsWith("ist")   && L > 5) { add(x.slice(0, -3)); add(x.slice(0, -3) + "e"); }
+
+    // 이름씨 만들기
+    if (x.endsWith("iness")   && L > 6) add(x.slice(0, -5) + "y");
+    if (x.endsWith("ness")    && L > 5) add(x.slice(0, -4));
+    if (x.endsWith("ment")    && L > 5) { add(x.slice(0, -4)); add(x.slice(0, -4) + "e"); }
+    if (x.endsWith("ship")    && L > 6) add(x.slice(0, -4));
+    if (x.endsWith("hood")    && L > 6) add(x.slice(0, -4));
+    if (x.endsWith("dom")     && L > 5) add(x.slice(0, -3));
+    if (x.endsWith("th")      && L > 5) add(x.slice(0, -2));
+    if (x.endsWith("ance")    && L > 5) { add(x.slice(0, -4)); add(x.slice(0, -4) + "e"); add(x.slice(0, -4) + "ant"); }
+    if (x.endsWith("ence")    && L > 5) { add(x.slice(0, -4)); add(x.slice(0, -4) + "e"); add(x.slice(0, -4) + "ent"); }
+    if (x.endsWith("ison")    && L > 5) add(x.slice(0, -4) + "e");
+    if (x.endsWith("mission") && L > 7) add(x.slice(0, -7) + "mit");
+    if (x.endsWith("ption")   && L > 6) { add(x.slice(0, -5) + "be"); add(x.slice(0, -4) + "e"); }
+    if (x.endsWith("ation")   && L > 6) { add(x.slice(0, -5)); add(x.slice(0, -5) + "e"); add(x.slice(0, -5) + "ate"); }
+    if (x.endsWith("ition")   && L > 6) { add(x.slice(0, -5) + "e"); add(x.slice(0, -5) + "ize"); }
+    if (x.endsWith("sion")    && L > 5) { add(x.slice(0, -4) + "de"); add(x.slice(0, -4) + "d"); add(x.slice(0, -3) + "e"); }
+    if (x.endsWith("tion")    && L > 5) { add(x.slice(0, -3) + "e"); add(x.slice(0, -4)); }
+    if (x.endsWith("ion")     && L > 5) { add(x.slice(0, -3)); add(x.slice(0, -3) + "e"); }
+    if (x.endsWith("ility")   && L > 6) { add(x.slice(0, -5) + "le"); add(x.slice(0, -5)); }
+    if (x.endsWith("ity")     && L > 5) { add(x.slice(0, -3)); add(x.slice(0, -3) + "e"); }
+    if (x.endsWith("y")       && L > 5) { add(x.slice(0, -1)); add(x.slice(0, -1) + "e"); }
+
+    // 그림씨 만들기
+    if (x.endsWith("ful")   && L > 4) { add(x.slice(0, -3)); add(x.slice(0, -3) + "e"); }
+    if (x.endsWith("less")  && L > 5) add(x.slice(0, -4));
+    if (x.endsWith("able")  && L > 5) { add(x.slice(0, -4)); add(x.slice(0, -4) + "e"); }
+    if (x.endsWith("ible")  && L > 5) { add(x.slice(0, -4)); add(x.slice(0, -4) + "e"); }
+    if (x.endsWith("ical")  && L > 5) { add(x.slice(0, -4) + "y"); add(x.slice(0, -2)); add(x.slice(0, -4)); }
+    if (x.endsWith("istic") && L > 6) { add(x.slice(0, -5)); add(x.slice(0, -3)); }
+    if (x.endsWith("ician") && L > 6) { add(x.slice(0, -4) + "c"); add(x.slice(0, -5) + "ics"); }
+    if (x.endsWith("ology") && L > 7) add(x.slice(0, -5));
+    if (x.endsWith("ous")   && L > 5) { add(x.slice(0, -3)); add(x.slice(0, -3) + "e"); add(x.slice(0, -4) + "y"); }
+    if (x.endsWith("ive")   && L > 4) { add(x.slice(0, -3)); add(x.slice(0, -3) + "e"); }
+    if (x.endsWith("al")    && L > 4) { add(x.slice(0, -2)); add(x.slice(0, -2) + "e"); }
+    if (x.endsWith("ic")    && L > 4) { add(x.slice(0, -2)); add(x.slice(0, -2) + "y"); }
+    if (x.endsWith("en")    && L > 5) { add(x.slice(0, -2)); add(x.slice(0, -1)); }
+
+    // 움직씨 만들기
+    if (x.endsWith("ize")   && L > 5) { add(x.slice(0, -3)); add(x.slice(0, -3) + "y"); }
+    if (x.endsWith("ise")   && L > 5) add(x.slice(0, -3));
+    if (x.endsWith("ify")   && L > 5) { add(x.slice(0, -3)); add(x.slice(0, -3) + "y"); }
+    return c;
+};
+
+/* 꼬리를 여러 겹 벗겨 나오는 후보를 모두 모은다.
+   carefully → careful → care 처럼 두세 겹인 말이 있다. */
+var _vocabClosure = function (seeds, step, rounds) {
+    var out = [], frontier = seeds.slice(), r, next;
+    for (r = 0; r < rounds && frontier.length && out.length < 80; r++) {
+        next = [];
+        frontier.forEach(function (x) {
+            step(x).forEach(function (cand) {
+                if (seeds.indexOf(cand) === -1 && out.indexOf(cand) === -1) { out.push(cand); next.push(cand); }
             });
         });
         frontier = next;
-        if (!frontier.length) break;
     }
     return out;
 };
 
-/* 단어 하나의 뜻을 찾는다. 못 찾으면 null — 학생이 직접 채운다. */
+var _vocabClean = function (raw) { return String(raw || "").toLowerCase().replace(/[^a-z]/g, ""); };
+
+window.vocabInflectClosure = function (w) { return _vocabClosure([w], window.vocabInflectForms, 2); };
+
+/* 후보 전부 — 쉬운 단어 판별이 아니라 넓게 훑어야 할 때 쓴다 */
+window.vocabBaseForms = function (raw) {
+    var w = _vocabClean(raw);
+    if (!w) return [];
+    var seeds = [w].concat(window.vocabInflectClosure(w));
+    return seeds.concat(_vocabClosure(seeds, window.vocabDeriveForms, 3));
+};
+
+/* 뜻 찾기.
+   찾은 자리에 따라 단어장에 남길 낱말이 달라진다.
+     쓴 그대로 있으면 → 그대로
+     굴절만 벗겨 찾으면 → 원형으로 (achieved → achieve)
+     파생까지 벗겨 찾으면 → 쓴 그대로 두고 뜻만 (movement 는 movement) */
 window.vocabLookup = function (raw) {
-    const dict = window.VOCAB_DICT || {};
-    const forms = window.vocabBaseForms(raw);
-    for (let i = 0; i < forms.length; i++) {
-        if (dict[forms[i]]) return { base: forms[i], meaning: dict[forms[i]] };
+    var dict = window.VOCAB_DICT || {};
+    var w = _vocabClean(raw);
+    if (!w) return null;
+    if (dict[w]) return { base: w, meaning: dict[w], via: "exact" };
+
+    var inf = window.vocabInflectClosure(w), i, j;
+    for (i = 0; i < inf.length; i++) {
+        if (dict[inf[i]]) return { base: inf[i], meaning: dict[inf[i]], via: "inflect" };
+    }
+
+    var seeds = [w].concat(inf);
+    for (i = 0; i < seeds.length; i++) {
+        var der = _vocabClosure([seeds[i]], window.vocabDeriveForms, 3);
+        for (j = 0; j < der.length; j++) {
+            if (dict[der[j]]) return { base: seeds[i], meaning: dict[der[j]], via: "derive" };
+        }
     }
     return null;
 };
 
-/* 기초 단어인지 — 원형까지 되돌려서 판단한다 (worked → work) */
+/* 기초 단어인지 — 굴절만 되돌려서 본다.
+   movement 를 move 로 되돌려 '쉬운 단어' 로 묶어 버리면 안 되기 때문이다. */
 window.vocabIsEasy = function (raw) {
-    const easy = window.VOCAB_EASY;
-    const forms = window.vocabBaseForms(raw);
-    for (let i = 0; i < forms.length; i++) {
-        if (easy.has(forms[i])) return true;
-    }
+    var easy = window.VOCAB_EASY;
+    var w = _vocabClean(raw);
+    if (!w) return false;
+    if (easy.has(w)) return true;
+    var inf = window.vocabInflectClosure(w), i;
+    for (i = 0; i < inf.length; i++) if (easy.has(inf[i])) return true;
     return false;
 };
 
@@ -1881,3 +1999,406 @@ Object.assign(window.VOCAB_DICT, {
 "meaning":"의미, 뜻",
 "translation":"번역"
 });
+
+/* ─────────────────────────────────────────────────────────────
+   기초 단어.
+
+   쉬운 말이라 뜻을 안 달아 뒀었는데, 파생어가 뜻을 빌려 갈 자리가 없어졌다.
+   move 에 뜻이 없으면 movement 도 뜻을 못 찾는다. 그래서 여기서 채운다.
+   화면에서는 여전히 '쉬운 단어' 로 묶여 접혀 있다.
+
+   이미 적어 둔 뜻은 건드리지 않는다.
+   ───────────────────────────────────────────────────────────── */
+(function (extra) {
+    var d = window.VOCAB_DICT;
+    Object.keys(extra).forEach(function (k) { if (!d[k]) d[k] = extra[k]; });
+})({
+"a":"하나의","about":"~에 대하여","above":"~ 위에","after":"~ 뒤에","again":"다시",
+"against":"~에 맞서","all":"모두","also":"또한","always":"언제나","am":"~이다",
+"an":"하나의","and":"그리고","another":"또 하나의","any":"어떤","are":"~이다",
+"around":"주위에","ask":"묻다, 부탁하다","at":"~에","away":"떨어져","back":"뒤, 등",
+"be":"~이다, 있다","because":"왜냐하면","been":"be의 과거분사","before":"~ 앞에, 전에",
+"being":"존재","below":"~ 아래에","best":"가장 좋은","better":"더 좋은",
+"between":"~ 사이에","big":"큰","both":"둘 다","but":"그러나","buy":"사다",
+"by":"~에 의해, ~ 옆에","call":"부르다, 전화하다","came":"come의 과거",
+"can":"~할 수 있다","cannot":"~할 수 없다","come":"오다","could":"~할 수 있었다",
+"day":"날, 하루","did":"do의 과거","different":"다른","do":"하다","does":"do의 3인칭",
+"doing":"하는 중","don":"~하지 않다 (don't)","down":"아래로","each":"각각의",
+"early":"이른, 일찍","eat":"먹다","end":"끝, 끝나다","enough":"충분한",
+"even":"심지어, ~조차","ever":"언젠가, 한 번이라도","every":"모든","example":"예, 보기",
+"eye":"눈","face":"얼굴, 마주하다","fact":"사실","family":"가족","far":"먼, 멀리",
+"feel":"느끼다","few":"몇 안 되는","find":"찾다, 알아내다","first":"첫 번째의",
+"five":"다섯","for":"~을 위해, ~ 동안","found":"find의 과거","four":"넷","friend":"친구",
+"from":"~에서, ~로부터","get":"얻다, 되다","girl":"소녀","give":"주다","go":"가다",
+"going":"가는 중","good":"좋은","got":"get의 과거","great":"훌륭한, 큰","group":"무리, 집단",
+"had":"have의 과거","hand":"손","happy":"행복한","has":"have의 3인칭","have":"가지다",
+"he":"그","head":"머리","hear":"듣다","help":"돕다, 도움","her":"그녀의","here":"여기",
+"high":"높은","him":"그를","his":"그의","home":"집","hour":"시간","house":"집",
+"how":"어떻게","however":"그러나","i":"나","if":"만약","in":"~ 안에","into":"~ 안으로",
+"is":"~이다","it":"그것","its":"그것의","just":"그저, 막","keep":"계속하다, 지키다",
+"kind":"종류; 친절한","know":"알다","large":"큰","last":"마지막의, 지난","late":"늦은",
+"learn":"배우다","leave":"떠나다, 남기다","left":"왼쪽; leave의 과거","let":"~하게 하다",
+"life":"삶, 생명","like":"좋아하다; ~처럼","little":"작은, 조금","live":"살다",
+"long":"긴, 오래","look":"보다, ~처럼 보이다","lot":"많음","love":"사랑하다",
+"made":"make의 과거","make":"만들다","man":"남자, 사람","many":"많은","may":"~일지 모른다",
+"me":"나를","mean":"의미하다; 못된","men":"man의 복수","might":"~일지 모른다",
+"mind":"마음; 꺼리다","more":"더 많은","most":"가장 많은","mother":"어머니",
+"move":"움직이다","much":"많은","must":"~해야 한다","my":"나의","name":"이름",
+"near":"가까운","need":"필요하다","never":"결코 ~않다","new":"새로운","next":"다음의",
+"nice":"좋은, 멋진","night":"밤","no":"아니","not":"~ 아니다","now":"지금",
+"number":"숫자, 수","of":"~의","off":"떨어져, 꺼진","often":"자주","oh":"아",
+"old":"늙은, 오래된","on":"~ 위에","once":"한 번, 옛날에","one":"하나",
+"only":"오직, 유일한","open":"열다, 열린","or":"또는","other":"다른","our":"우리의",
+"out":"밖으로","over":"~ 너머, 끝난","page":"쪽, 면","paper":"종이, 논문","part":"부분",
+"people":"사람들","place":"장소, 놓다","play":"놀다, 연주하다","please":"부디; 기쁘게 하다",
+"point":"점, 요점; 가리키다","put":"놓다","read":"읽다","ready":"준비된","real":"진짜의",
+"really":"정말로","right":"옳은; 오른쪽","room":"방, 공간","run":"달리다, 운영하다",
+"said":"say의 과거","same":"같은","saw":"see의 과거; 톱","say":"말하다","school":"학교",
+"sea":"바다","second":"두 번째의; 초","see":"보다","seem":"~처럼 보이다",
+"set":"놓다, 정하다","she":"그녀","should":"~해야 한다","show":"보여 주다",
+"side":"쪽, 옆면","since":"~ 이후로, ~ 때문에","sit":"앉다","six":"여섯","small":"작은",
+"so":"그래서, 그렇게","some":"몇몇의","soon":"곧","sound":"소리; ~처럼 들리다",
+"speak":"말하다","start":"시작하다","state":"상태, 주; 말하다","stay":"머무르다",
+"still":"여전히; 가만한","stop":"멈추다","story":"이야기","student":"학생","such":"그런",
+"take":"가지다, 데려가다","talk":"이야기하다","teacher":"선생님","tell":"말하다","ten":"열",
+"than":"~보다","thank":"고마워하다","that":"저것, 그","the":"그","their":"그들의",
+"them":"그들을","then":"그때, 그러고 나서","there":"거기","these":"이것들","they":"그들",
+"thing":"것, 물건","think":"생각하다","this":"이것","those":"저것들","though":"~이지만",
+"three":"셋","through":"~을 통해","time":"시간, 번","to":"~로, ~에게","today":"오늘",
+"together":"함께","too":"너무; 또한","took":"take의 과거","top":"꼭대기, 맨 위",
+"town":"마을","try":"해 보다","turn":"돌다, 바뀌다; 차례","two":"둘","under":"~ 아래에",
+"until":"~까지","up":"위로","upon":"~ 위에","us":"우리를","use":"쓰다, 사용하다",
+"used":"쓰인; ~하곤 했다","very":"매우","walk":"걷다","want":"원하다","war":"전쟁",
+"watch":"지켜보다; 손목시계","water":"물","way":"길, 방법","we":"우리","week":"주",
+"well":"잘; 우물","went":"go의 과거","were":"be의 과거","what":"무엇","when":"언제",
+"where":"어디","which":"어느","while":"~하는 동안","white":"흰","who":"누구","why":"왜",
+"will":"~할 것이다","wish":"바라다","with":"~와 함께","without":"~ 없이","woman":"여자",
+"word":"낱말, 말","work":"일하다, 작동하다","world":"세계","would":"~할 것이다",
+"write":"쓰다","year":"해, 년","yes":"예","yet":"아직; 그러나","you":"너","young":"젊은",
+"your":"너의",
+
+/* 규칙으로는 원형을 못 찾는 말, 그리고 자주 나오는데 빠져 있던 말 */
+"although":"비록 ~일지라도","data":"자료, 데이터","medium":"매체; 중간의",
+"basis":"기초, 근거","emphasis":"강조","thesis":"논제, 논문","crisis":"위기",
+"hypothesis":"가설","index":"색인, 지표","matrix":"행렬, 모체","curriculum":"교육 과정",
+"scientist":"과학자","scientific":"과학의","explanation":"설명",
+"description":"설명, 묘사","comparison":"비교","recognition":"인식, 인정",
+"discovery":"발견","possible":"가능한","possibility":"가능성","probable":"있음 직한",
+"final":"마지막의","statement":"진술, 말","movement":"움직임, 운동",
+"confidence":"자신감, 확신","politics":"정치","politician":"정치인","musician":"음악가",
+"artistic":"예술의","psychology":"심리학","biology":"생물학","technology":"기술",
+"observation":"관찰","impression":"인상","expression":"표현","permission":"허락",
+"admission":"입장, 인정","majority":"다수","minority":"소수",
+
+/* 앞가지가 붙어 뜻이 뒤집히는 말은 따로 적는다.
+   unable 을 able 로 되돌려 '할 수 있는' 이라고 알려 주면 정반대가 되기 때문이다. */
+"unable":"~할 수 없는","unknown":"알려지지 않은","unusual":"흔치 않은",
+"unhappy":"불행한","unfair":"불공평한","unlikely":"~할 것 같지 않은",
+"unnecessary":"불필요한","uncomfortable":"불편한","unexpected":"뜻밖의",
+"unfortunately":"불행히도","incorrect":"틀린","impossible":"불가능한",
+"impatient":"참을성 없는","independent":"독립적인","invisible":"눈에 보이지 않는",
+"informal":"격식 없는","inexpensive":"비싸지 않은","dishonest":"정직하지 않은",
+"disagree":"동의하지 않다","disappear":"사라지다","disadvantage":"불리한 점",
+"dislike":"싫어하다","misunderstand":"오해하다","mistake":"실수","misuse":"잘못 쓰다",
+
+/* 글을 잇는 말 */
+"nevertheless":"그럼에도 불구하고","therefore":"그러므로","furthermore":"게다가",
+"moreover":"더욱이","otherwise":"그렇지 않으면","whereas":"반면에",
+"whether":"~인지 아닌지","despite":"~에도 불구하고","throughout":"~ 내내",
+"somewhat":"다소","somehow":"어떻게든","anyway":"어쨌든","instead":"대신에",
+"besides":"게다가","meanwhile":"그동안에","thus":"따라서","hence":"그러므로"
+});
+
+/* 불규칙형이 가리키는 원형인데 뜻이 비어 있던 낱말들 */
+(function (extra) {
+    var d = window.VOCAB_DICT;
+    Object.keys(extra).forEach(function (k) { if (!d[k]) d[k] = extra[k]; });
+})({
+"become":"~이 되다","begin":"시작하다","spend":"쓰다, 보내다","blow":"불다",
+"drink":"마시다","win":"이기다","slide":"미끄러지다","bite":"물다","steal":"훔치다",
+"freeze":"얼다","beat":"두드리다, 이기다","bend":"구부리다","bleed":"피를 흘리다",
+"dig":"파다","hang":"걸다, 매달다","kneel":"무릎 꿇다","sink":"가라앉다",
+"shine":"빛나다","speed":"빠르기; 서두르다","swing":"흔들리다","weep":"울다",
+"lie":"눕다; 거짓말하다","bad":"나쁜",
+"tooth":"이, 치아","mouse":"쥐","goose":"거위","ox":"황소","knife":"칼",
+"wife":"아내","leaf":"잎","wolf":"늑대","shelf":"선반","calf":"송아지",
+"thief":"도둑","loaf":"덩어리","self":"자기 자신","appendix":"부록, 맹장",
+"bacterium":"세균","fungus":"곰팡이, 균류","cactus":"선인장","alumnus":"졸업생",
+"stimulus":"자극","radius":"반지름","formula":"공식"
+});
+
+/* 흔한데 빠져 있던 일상어 */
+(function (extra) {
+    var d = window.VOCAB_DICT;
+    Object.keys(extra).forEach(function (k) { if (!d[k]) d[k] = extra[k]; });
+})({
+"father":"아버지","brother":"형제","sister":"자매","parent":"부모","son":"아들",
+"daughter":"딸","baby":"아기","child":"아이","aunt":"이모, 고모","uncle":"삼촌",
+"cousin":"사촌","husband":"남편","grandmother":"할머니","grandfather":"할아버지",
+
+"corner":"모퉁이","member":"구성원","answer":"대답, 답하다","center":"중심",
+"finger":"손가락","silver":"은","dinner":"저녁 식사","lunch":"점심","breakfast":"아침 식사",
+"kitchen":"부엌","chicken":"닭, 닭고기","curtain":"커튼","captain":"주장, 선장",
+"lantern":"등불","golden":"금빛의","modern":"현대의","eastern":"동쪽의","western":"서쪽의",
+"northern":"북쪽의","southern":"남쪽의","suffer":"고통받다","contest":"대회, 겨루기",
+
+"history":"역사","animal":"동물","plant":"식물, 심다","total":"전체의, 합계",
+"metal":"금속","rival":"경쟁자","magic":"마법","plastic":"플라스틱","national":"국가의",
+"army":"군대","navy":"해군","copy":"복사하다, 사본",
+
+"angry":"화난","hungry":"배고픈","thirsty":"목마른","pretty":"예쁜","ugly":"못생긴",
+"serious":"진지한, 심각한","anxious":"불안한, 간절한","either":"둘 중 하나",
+"neither":"둘 다 아닌","whenever":"~할 때마다","wherever":"어디든지",
+
+"morning":"아침","afternoon":"오후","evening":"저녁","yesterday":"어제",
+"tomorrow":"내일","tonight":"오늘 밤","month":"달, 월","weekend":"주말",
+"season":"계절","spring":"봄; 튀어 오르다","summer":"여름","autumn":"가을","winter":"겨울",
+
+"body":"몸","hair":"머리카락","arm":"팔","leg":"다리","hands":"손",
+"heart":"심장, 마음","brain":"뇌","blood":"피","bone":"뼈","skin":"피부",
+"voice":"목소리","smile":"미소 짓다","cry":"울다","laugh":"웃다","sleep":"자다",
+
+"food":"음식","rice":"쌀, 밥","bread":"빵","meat":"고기","fruit":"과일",
+"vegetable":"채소","milk":"우유","egg":"달걀","salt":"소금","sugar":"설탕",
+"taste":"맛; 맛보다",
+
+"city":"도시","village":"마을","country":"나라, 시골","street":"거리","road":"길",
+"bridge":"다리","building":"건물","station":"역","airport":"공항","hotel":"호텔",
+"market":"시장","shop":"가게","store":"가게; 저장하다","library":"도서관",
+"hospital":"병원","church":"교회","park":"공원","farm":"농장","garden":"정원",
+
+"train":"기차; 훈련하다","bus":"버스","car":"자동차","bike":"자전거","plane":"비행기",
+"ship":"배","boat":"배","travel":"여행하다","trip":"여행","journey":"여정",
+
+"money":"돈","price":"값","cost":"비용; 비용이 들다","cheap":"싼","expensive":"비싼",
+"rich":"부유한","poor":"가난한","pay":"지불하다","sell":"팔다","spend":"쓰다",
+
+"weather":"날씨","rain":"비; 비가 오다","snow":"눈","wind":"바람","cloud":"구름",
+"sun":"해","moon":"달","star":"별","sky":"하늘","earth":"지구, 땅",
+"fire":"불","ice":"얼음","hot":"뜨거운","cold":"차가운","warm":"따뜻한","cool":"시원한",
+"dry":"마른","wet":"젖은",
+
+"color":"색","red":"빨간","blue":"파란","green":"초록의","yellow":"노란",
+"black":"검은","brown":"갈색의","gray":"회색의",
+
+"door":"문","window":"창문","wall":"벽","floor":"바닥, 층","roof":"지붕",
+"table":"탁자","chair":"의자","bed":"침대","desk":"책상","clock":"시계",
+"key":"열쇠","box":"상자","bag":"가방","book":"책","pen":"펜","pencil":"연필",
+
+"game":"놀이, 경기","sport":"운동","team":"팀","player":"선수","win":"이기다",
+"score":"점수","practice":"연습하다","exercise":"운동, 연습",
+
+"music":"음악","song":"노래","sing":"노래하다","dance":"춤추다","movie":"영화",
+"picture":"그림, 사진","photo":"사진","paint":"칠하다, 그리다",
+"story":"이야기","news":"소식","letter":"편지, 글자","message":"전갈, 메시지",
+
+"class":"수업, 반","lesson":"수업, 교훈","homework":"숙제","test":"시험",
+"exam":"시험","grade":"성적, 학년","study":"공부하다","teach":"가르치다",
+"question":"질문","subject":"과목, 주제","math":"수학","english":"영어",
+
+"job":"일자리","office":"사무실","company":"회사","worker":"일하는 사람",
+"doctor":"의사","nurse":"간호사","police":"경찰","farmer":"농부","cook":"요리하다","chef":"요리사",
+
+"idea":"생각","dream":"꿈","hope":"바라다, 희망","fear":"두려움","anger":"화",
+"joy":"기쁨","sad":"슬픈","glad":"기쁜","tired":"피곤한","busy":"바쁜","free":"자유로운",
+"safe":"안전한","careful":"조심스러운","quiet":"조용한","loud":"시끄러운",
+"clean":"깨끗한, 치우다","dirty":"더러운","full":"가득한","empty":"빈",
+"easy":"쉬운","hard":"어려운, 단단한","strong":"강한","weak":"약한",
+"fast":"빠른","slow":"느린","heavy":"무거운","light":"가벼운; 빛",
+"deep":"깊은","wide":"넓은","narrow":"좁은","thick":"두꺼운","thin":"얇은",
+"round":"둥근","straight":"곧은","sharp":"날카로운","smooth":"매끄러운",
+
+"begin":"시작하다","finish":"끝내다","continue":"계속하다","change":"바꾸다",
+"choose":"고르다","decide":"결정하다","forget":"잊다","remember":"기억하다",
+"believe":"믿다","understand":"이해하다","explain":"설명하다","describe":"묘사하다",
+"agree":"동의하다","refuse":"거절하다","promise":"약속하다","invite":"초대하다",
+"visit":"방문하다","meet":"만나다","join":"함께하다","share":"나누다","bring":"가져오다",
+"carry":"나르다","hold":"잡다, 열다","catch":"잡다","throw":"던지다","push":"밀다",
+"pull":"당기다","break":"깨다","fix":"고치다","build":"짓다","grow":"자라다",
+"kill":"죽이다","save":"구하다, 아끼다","lose":"잃다","search":"찾다","wait":"기다리다",
+"follow":"따르다","lead":"이끌다","enter":"들어가다","arrive":"도착하다",
+"return":"돌아오다","fall":"떨어지다","fly":"날다","swim":"헤엄치다","jump":"뛰다",
+"stand":"서다","wear":"입다","wash":"씻다","draw":"그리다","send":"보내다",
+"receive":"받다","borrow":"빌리다","lend":"빌려주다"
+});
+
+/* 지문에 자주 나오는 학술어 */
+(function (extra) {
+    var d = window.VOCAB_DICT;
+    Object.keys(extra).forEach(function (k) { if (!d[k]) d[k] = extra[k]; });
+})({
+"as":"~로서, ~만큼","behavior":"행동","behaviour":"행동","behave":"행동하다",
+"response":"반응, 대답","respond":"반응하다, 대답하다","gene":"유전자","genetic":"유전의",
+"critic":"비평가","criticism":"비판, 비평","criticize":"비판하다","critical":"비판적인, 중요한",
+"method":"방법","methodology":"방법론","sample":"표본, 견본","culture":"문화",
+"estimate":"어림잡다, 추정","underestimate":"과소평가하다","overestimate":"과대평가하다",
+"influential":"영향력 있는","publication":"출판, 발표","publish":"출판하다",
+"investigation":"조사","investigate":"조사하다","origin":"기원","developmental":"발달의",
+"personality":"성격","nurture":"양육하다, 기르다","emotional":"감정의","emotion":"감정",
+"weakness":"약점","strength":"강점, 힘","firm":"단단한; 회사","measure":"재다, 조치",
+"suggest":"제안하다, 시사하다","observe":"관찰하다","raise":"기르다, 올리다",
+"lasting":"오래가는","contribute":"기여하다","contribution":"기여","factor":"요인",
+
+"approach":"접근하다; 접근법","aspect":"측면","assume":"가정하다","assumption":"가정",
+"available":"이용할 수 있는","benefit":"이익; 이롭다","capacity":"수용력, 능력",
+"circumstance":"상황","complex":"복잡한","component":"구성 요소","concept":"개념",
+"consequence":"결과","considerable":"상당한","consist":"이루어져 있다","constant":"끊임없는",
+"constitute":"구성하다","context":"맥락","contrast":"대조","convention":"관습",
+"crucial":"결정적인","define":"정의하다","definition":"정의","demonstrate":"보여 주다",
+"derive":"끌어내다","distinct":"뚜렷이 다른","distinguish":"구별하다","domain":"영역",
+"dominant":"우세한","element":"요소","emerge":"나타나다","enhance":"높이다",
+"ensure":"보장하다","equivalent":"동등한","essential":"필수적인","establish":"세우다",
+"estate":"재산, 부동산","ethical":"윤리적인","evaluate":"평가하다","exclude":"제외하다",
+"exhibit":"보여 주다, 전시하다","exploit":"이용하다, 착취하다","external":"외부의",
+"facilitate":"쉽게 하다","feature":"특징","framework":"틀","function":"기능; 작동하다",
+"fundamental":"근본적인","generate":"만들어 내다","identical":"똑같은","identify":"알아보다",
+"ignore":"무시하다","illustrate":"보여 주다, 예를 들다","implement":"실행하다",
+"implication":"함의, 영향","imply":"암시하다","incentive":"동기, 유인","incorporate":"포함하다",
+"indicate":"가리키다","individual":"개인; 개별의","inevitable":"피할 수 없는",
+"infer":"추론하다","inherent":"타고난","initial":"처음의","initiate":"시작하다",
+"innovation":"혁신","insight":"통찰","integrate":"통합하다","intense":"강렬한",
+"interpret":"해석하다","interval":"간격","intervene":"개입하다","intrinsic":"본질적인",
+"isolate":"고립시키다","justify":"정당화하다","maintain":"유지하다","manipulate":"조작하다",
+"mechanism":"작동 원리","minimal":"최소의","modify":"수정하다","motive":"동기",
+"mutual":"서로의","norm":"규범","notion":"개념","obtain":"얻다","occur":"일어나다",
+"orient":"방향을 잡다","outcome":"결과","overlap":"겹치다",
+"parallel":"평행한, 비슷한","participate":"참여하다","perceive":"인식하다",
+"perspective":"관점","persist":"계속되다","phase":"단계","potential":"잠재적인; 가능성",
+"precise":"정확한","predict":"예측하다","preliminary":"예비의","presume":"추정하다",
+"previous":"이전의","primary":"주요한, 처음의","principal":"주요한; 교장",
+"prior":"이전의","procedure":"절차","proceed":"진행하다","prohibit":"금지하다",
+"promote":"촉진하다, 승진시키다","proportion":"비율","pursue":"추구하다",
+"random":"무작위의","ratio":"비율","rational":"이성적인","reinforce":"강화하다",
+"reject":"거부하다","relevant":"관련 있는","reluctant":"꺼리는","rely":"의지하다",
+"restrict":"제한하다","retain":"유지하다","reveal":"드러내다","revise":"고치다",
+"rigid":"뻣뻣한, 엄격한","scope":"범위","sequence":"차례, 연속","shift":"바뀌다; 변화",
+"significant":"중요한, 상당한","similar":"비슷한","simulate":"흉내 내다","somewhat":"다소",
+"specify":"명시하다","stable":"안정된","statistic":"통계","status":"지위, 상태",
+"straightforward":"간단한, 솔직한","structure":"구조","subsequent":"뒤이은",
+"substitute":"대신하다; 대체물","sufficient":"충분한","sustain":"지탱하다",
+"tendency":"경향","theory":"이론","transform":"바꾸다","transmit":"전달하다",
+"trigger":"불러일으키다; 방아쇠","ultimate":"궁극적인","undergo":"겪다",
+"undertake":"떠맡다","uniform":"한결같은; 제복","utilize":"활용하다","valid":"타당한",
+"vary":"다르다, 바꾸다","via":"~을 통해","virtual":"사실상의, 가상의","visible":"눈에 보이는",
+"widespread":"널리 퍼진","yield":"내다, 양보하다"
+});
+
+/* 지문 시험에서 걸린 나머지 */
+(function (extra) {
+    var d = window.VOCAB_DICT;
+    Object.keys(extra).forEach(function (k) { if (!d[k]) d[k] = extra[k]; });
+})({
+"temperature":"온도, 기온","glacier":"빙하","climb":"오르다","pledge":"약속하다; 서약",
+"uneven":"고르지 않은","insufficient":"불충분한","sunrise":"해돋이","sunset":"해넘이",
+"bicycle":"자전거","factory":"공장","fishing":"낚시","coastal":"해안의","coast":"해안",
+"melt":"녹다","emission":"배출","carbon":"탄소","voluntary":"자발적인","binding":"구속력 있는",
+"regulation":"규제","activist":"운동가","threaten":"위협하다","steadily":"꾸준히",
+"flooding":"홍수","flood":"홍수","globe":"지구, 구","region":"지역","progress":"진전, 나아가다"
+});
+
+/* 파생 규칙에 잘못 걸리기 쉬운 낱말들 — 표제어로 못 박아 둔다 */
+(function (extra) {
+    var d = window.VOCAB_DICT;
+    Object.keys(extra).forEach(function (k) { if (!d[k]) d[k] = extra[k]; });
+})({
+"several":"몇몇의, 여럿의","youth":"젊음, 젊은이","shoulder":"어깨","topic":"주제",
+"offer":"제안하다; 제안","hardly":"거의 ~않다","nearly":"거의","listen":"듣다",
+"passive":"수동적인","rubber":"고무","reply":"답하다; 대답","proper":"알맞은",
+"panic":"공황; 당황하다","logic":"논리","famous":"유명한","various":"여러 가지의",
+"nervous":"긴장한","curious":"궁금한","obvious":"뻔한, 명백한","jealous":"질투하는",
+"precious":"귀중한","generous":"너그러운","numerous":"수많은","enormous":"거대한",
+"delicious":"맛있는","religious":"종교의","ridiculous":"터무니없는","tremendous":"엄청난",
+"dangerous":"위험한",
+
+"general":"일반적인; 장군","natural":"자연의","central":"중심의","local":"지역의",
+"moral":"도덕의","oral":"입의, 구두의","rural":"시골의","urban":"도시의",
+"ideal":"이상적인","equal":"같은","usual":"보통의","formal":"격식 있는",
+"normal":"보통의","legal":"법의, 합법의","loyal":"충성스러운","royal":"왕의",
+"brutal":"잔인한","fatal":"치명적인","vital":"필수적인","global":"세계적인",
+"social":"사회의","special":"특별한","personal":"개인의","physical":"신체의, 물리의",
+"medical":"의학의","musical":"음악의","practical":"실용적인","political":"정치의",
+"original":"본래의; 원본","digital":"디지털의","capital":"수도; 자본","festival":"축제",
+"journal":"일지, 학술지","material":"재료; 물질의","mental":"정신의","similar":"비슷한",
+"universal":"보편적인","financial":"재정의","industrial":"산업의","official":"공식의; 공무원",
+"professional":"전문의","traditional":"전통의","additional":"추가의",
+"international":"국제의","environmental":"환경의",
+
+"north":"북쪽","south":"남쪽","east":"동쪽","west":"서쪽","truth":"진실",
+"health":"건강","wealth":"부, 재산","depth":"깊이","width":"너비","length":"길이",
+"birth":"탄생","death":"죽음","faith":"믿음","mouth":"입","path":"길",
+"cloth":"천","breath":"숨","growth":"성장",
+
+"active":"활동적인","native":"타고난; 원주민","relative":"친척; 상대적인",
+"creative":"창의적인","positive":"긍정적인","negative":"부정적인","sensitive":"민감한",
+"effective":"효과적인","expensive":"비싼","massive":"거대한",
+
+"public":"대중의; 대중","basic":"기본의","classic":"고전의","comic":"웃긴; 만화",
+"tragic":"비극의","toxic":"독성의","ethnic":"민족의","civic":"시민의",
+
+"happen":"일어나다","sudden":"갑작스러운","wooden":"나무로 된","oxygen":"산소",
+"citizen":"시민","dozen":"열두 개","token":"표, 징표",
+
+"power":"힘","cover":"덮다; 표지","order":"명령, 순서; 주문하다","matter":"문제; 중요하다",
+"master":"주인; 숙달하다","character":"성격, 등장인물","computer":"컴퓨터",
+"consumer":"소비자","customer":"손님","manner":"방식, 태도","mirror":"거울",
+"murder":"살인","partner":"동반자","quarter":"사분의 일","shelter":"쉼터",
+"soldier":"군인","tower":"탑","wonder":"궁금해하다; 놀라움","whisper":"속삭이다",
+"temper":"성질","tiger":"호랑이","thunder":"천둥","teenager":"십 대",
+"transfer":"옮기다","chapter":"장, 챕터","prisoner":"죄수","prefer":"더 좋아하다",
+
+"likely":"~할 것 같은","lonely":"외로운","lovely":"사랑스러운","friendly":"다정한",
+"daily":"매일의","weekly":"주간의","monthly":"월간의","silly":"어리석은",
+"supply":"공급하다","apply":"적용하다, 지원하다",
+
+"duty":"의무","lady":"숙녀","lazy":"게으른","tiny":"아주 작은","unity":"통합",
+"worry":"걱정하다","hurry":"서두르다","marry":"결혼하다","salary":"월급",
+"safety":"안전","society":"사회","variety":"다양성","quality":"질","quantity":"양",
+"energy":"에너지, 기운","enemy":"적","entry":"들어감, 참가","holiday":"휴일",
+"injury":"부상","luxury":"사치","memory":"기억","mystery":"수수께끼","poetry":"시",
+"poverty":"가난","privacy":"사생활","property":"재산, 속성","recovery":"회복",
+"remedy":"치료법","secretary":"비서","therapy":"치료","treaty":"조약","victory":"승리"
+});
+
+/* ─────────────────────────────────────────────────────────────
+   학생들이 채운 낱말.
+
+   사전에 없는 낱말에 뜻을 적으면 한 표가 된다.
+   같은 뜻을 적은 사람이 둘이 되면 여기로 올라와 모두가 쓴다.
+   누가 적었는지는 남기지 않는다.
+
+   붙박이 사전이 늘 이긴다. 빈자리만 메운다 —
+   several 의 뜻을 누가 '심각한' 으로 덮어쓰는 일이 없어야 하기 때문이다.
+   ───────────────────────────────────────────────────────────── */
+window.VOCAB_SHARED = {};
+
+window.vocabAddShared = function (map) {
+    var d = window.VOCAB_DICT, prev = window.VOCAB_SHARED, n = 0;
+
+    // 지난번에 얹었다가 이번에 빠진 낱말은 도로 뺀다 (학습부가 지웠을 때)
+    Object.keys(prev).forEach(function (w) {
+        if (!map || !map[w]) { if (d[w] === prev[w]) delete d[w]; }
+    });
+
+    window.VOCAB_SHARED = {};
+    Object.keys(map || {}).forEach(function (k) {
+        var w = String(k || "").toLowerCase();
+        var m = map[k];
+        if (!w || !w.match(/^[a-z]{2,40}$/)) return;
+        if (typeof m !== "string" || !m || m.length > 200) return;
+        window.VOCAB_SHARED[w] = m;
+        // 빈자리면 채우고, 지난번에 우리가 얹었던 값이면 새 값으로 갈아 끼운다.
+        // 붙박이 뜻은 어느 쪽도 아니므로 건드리지 않는다.
+        if (!d[w] || d[w] === prev[w]) d[w] = m;
+        if (d[w] === m) n++;
+    });
+    return n;
+};
+
+/* 뜻이 같은지 견주기 위한 꼴.
+   띄어쓰기와 부호를 털어내, '뜻밖의 행운' 과 '뜻밖의행운' 을 같게 본다. */
+window.vocabNormMeaning = function (t) {
+    return String(t || "").toLowerCase()
+        .replace(/[\s,.;:/~()\[\]{}'"!?\-]/g, "")
+        .replace(/[\u00B7\u2014\u2013]/g, "")
+        .slice(0, 60);
+};
