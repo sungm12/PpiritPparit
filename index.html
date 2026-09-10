@@ -36,6 +36,10 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
     <!-- MathJax (수학 공식 렌더링용) -->
     <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+    <!-- 영어 단어장 — 사진 글자 인식(OCR). 브라우저 안에서만 돌아간다. 사진은 서버로 가지 않는다. -->
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5.1.1/dist/tesseract.min.js"></script>
+    <!-- 영어 단어장 — 고교 필수 영단어 사전 -->
+    <script src="./vocab-dict.js"></script>
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -594,15 +598,198 @@
                 transition-duration:.001ms !important; scroll-behavior:auto !important;
             }
         }
+
+        /* ══════════════════════════════════════════════════════
+           말랑하고 따뜻한 톤
+
+           마크업은 그대로 두고 여기서 모양만 덮어쓴다.
+           회색만 쓰면 창백해 보이므로 바탕에 크림빛을 섞고,
+           모서리를 넉넉히 굴리고, 그림자는 옅고 따뜻하게 깐다.
+           강조색은 형광이 아니라 부드러운 연둣빛으로.
+           ══════════════════════════════════════════════════════ */
+
+        :root, :root[data-theme="light"] {
+            color-scheme: light;
+
+            --bg:        #FFFBF3;    /* 크림빛 바탕 */
+            --bg-2:      #FFFFFF;
+            --surface:   #FFFFFF;
+            --surface-2: #FBF3E4;
+            --sheet:     #FFFFFF;
+
+            --line:      #F0E5D2;
+            --line-str:  #E2D2B8;
+
+            --txt:       #3B3128;    /* 순검정 대신 따뜻한 진갈색 */
+            --txt-dim:   #7A6B5B;
+            --txt-faint: #A4917C;
+
+            --lime:      #C3E765;    /* 부드러운 연두 */
+            --lime-ink:  #5C7F14;
+            --brand:     #C3E765;
+            --brand-lt:  #D3F07F;
+            --brand-dp:  #5C7F14;
+            --on-accent: #2E3D0A;    /* 연두 위에 얹는 진한 올리브 */
+
+            --pink:      #FF9BBA;
+            --pink-ink:  #D2537D;
+            --rose:      #E4658C;
+            --cyan:      #7DD8E8;
+            --cyan-ink:  #17798E;
+            --gold:      #C98A18;
+
+            --glow:      0;
+            --r:         14px;       /* 넉넉히 굴린 모서리 */
+        }
+
+        :root[data-theme="dark"] {
+            color-scheme: dark;
+
+            --bg:        #1F1B16;    /* 따뜻한 어두운 갈색 */
+            --bg-2:      #2A241D;
+            --surface:   #2A241D;
+            --surface-2: #352E25;
+            --sheet:     #2A241D;
+
+            --line:      #3D352B;
+            --line-str:  #4E4438;
+
+            --txt:       #F7F0E4;
+            --txt-dim:   #C3B5A2;
+            --txt-faint: #9A8B78;
+
+            --lime:      #C3E765;
+            --lime-ink:  #D3F07F;
+            --brand:     #C3E765;
+            --brand-lt:  #D3F07F;
+            --brand-dp:  #A8CF4A;
+            --on-accent: #2E3D0A;
+
+            --pink:      #FF9BBA;
+            --pink-ink:  #FFB3CB;
+            --rose:      #FF8FB1;
+            --cyan:      #7DD8E8;
+            --cyan-ink:  #A5E6F1;
+            --gold:      #F0C264;
+
+            --glow:      0;
+        }
+
+        body { letter-spacing: -0.011em; transition: none; }
+
+        /* 배경 잔광·광택은 계속 끈다 */
+        .aurora, .aurora i, .grain, .vignette, .shine { display: none !important; }
+
+        /* 네온 글자 → 은은한 색 글자 */
+        .neon-lime, .neon-pink, .neon-cyan,
+        :root[data-theme="dark"] .neon-lime,
+        :root[data-theme="dark"] .neon-pink,
+        :root[data-theme="dark"] .neon-cyan { text-shadow: none !important; }
+        .neon-lime { color: var(--lime-ink); }
+        .neon-pink { color: var(--pink-ink); }
+        .neon-cyan { color: var(--cyan-ink); }
+        .wordmark.neon-lime { color: var(--txt) !important; }
+
+        /* 카드 — 말랑한 모서리와 옅고 따뜻한 그림자 */
+        .glass, .glass-solid,
+        :root[data-theme="light"] .glass,
+        :root[data-theme="light"] .glass-solid {
+            background: var(--surface) !important;
+            border: 1px solid var(--line) !important;
+            backdrop-filter: none !important;
+            -webkit-backdrop-filter: none !important;
+            box-shadow: 0 2px 10px -2px rgba(120, 92, 54, .08) !important;
+        }
+        :root[data-theme="dark"] .glass,
+        :root[data-theme="dark"] .glass-solid { box-shadow: 0 2px 10px -2px rgba(0,0,0,.35) !important; }
+        .topline::before, .glass::after { display: none !important; }
+        .lift { transition: transform .2s ease, box-shadow .2s ease !important; }
+        .lift:hover { transform: translateY(-2px) !important;
+                      box-shadow: 0 8px 20px -6px rgba(120, 92, 54, .16) !important; }
+
+        /* 버튼 — 광택 쓸기는 빼고, 누르는 맛만 남긴다 */
+        .btn { font-weight: 700 !important;
+               transition: background-color .16s ease, transform .12s ease !important; }
+        .btn::before { display: none !important; }
+        .btn:hover { transform: translateY(-1px) !important; }
+        .btn:active { transform: translateY(0) !important; }
+        .btn-primary { background: var(--brand) !important; color: var(--on-accent) !important;
+                       box-shadow: 0 2px 8px -2px rgba(150, 190, 70, .5) !important; }
+        .btn-primary:hover { background: var(--brand-lt) !important; }
+        .btn-pink { background: var(--pink) !important; color: #4A1526 !important;
+                    box-shadow: 0 2px 8px -2px rgba(230, 130, 165, .5) !important; }
+        .btn-dark { background: var(--surface-2) !important; color: var(--txt) !important;
+                    border: 1px solid var(--line) !important; box-shadow: none !important; }
+        .btn-ghost { background: transparent !important; border: 1px solid var(--line) !important;
+                     color: var(--txt-dim) !important; box-shadow: none !important; }
+        .btn-ghost:hover { background: var(--surface-2) !important; color: var(--txt) !important; }
+
+        /* 입력칸 */
+        .fld { background: var(--bg-2) !important; border: 1px solid var(--line) !important;
+               border-radius: var(--r) !important; box-shadow: none !important; }
+        .fld:focus { border-color: var(--brand-dp) !important;
+                     box-shadow: 0 0 0 3px color-mix(in srgb, var(--lime) 38%, transparent) !important; }
+
+        /* 배지 — 둥글고 옅은 색 */
+        .tag { border-radius: 999px !important; font-weight: 700 !important; padding: .22rem .66rem !important; }
+        .tag-brand   { background: color-mix(in srgb, var(--lime) 34%, transparent) !important; color: var(--lime-ink) !important;  border-color: transparent !important; }
+        .tag-neutral { background: var(--surface-2) !important;                                 color: var(--txt-dim) !important;   border-color: transparent !important; }
+        .tag-gold    { background: color-mix(in srgb, var(--gold) 20%, transparent) !important; color: var(--gold) !important;      border-color: transparent !important; }
+        .tag-violet,
+        .tag-rose    { background: color-mix(in srgb, var(--pink) 30%, transparent) !important; color: var(--pink-ink) !important;  border-color: transparent !important; }
+        .tag-blue    { background: color-mix(in srgb, var(--cyan) 30%, transparent) !important; color: var(--cyan-ink) !important;  border-color: transparent !important; }
+
+        /* 칩 (필터) */
+        .chip { border-radius: 999px !important; font-weight: 700 !important;
+                background: var(--surface) !important; border: 1px solid var(--line) !important;
+                transition: background-color .16s ease, color .16s ease, transform .12s ease !important; }
+        .chip:hover { transform: translateY(-1px) !important; background: var(--surface-2) !important; }
+        .chip.on, .chip.on-alt { background: var(--brand) !important; border-color: var(--brand) !important;
+                                 color: var(--on-accent) !important; box-shadow: none !important; }
+
+        /* 메인 탭 */
+        .seg { background: var(--surface-2) !important; border: 1px solid var(--line) !important;
+               border-radius: 999px !important; box-shadow: none !important; }
+        .seg-ind { background: var(--surface) !important; border-radius: 999px !important;
+                   box-shadow: 0 2px 6px -1px rgba(120, 92, 54, .16) !important; }
+        .seg-btn { font-weight: 700 !important; }
+        .seg-btn.on { color: var(--txt) !important; }
+
+        .icon-btn { background: var(--surface) !important; border: 1px solid var(--line) !important;
+                    border-radius: 999px !important; box-shadow: none !important; }
+        .icon-btn:hover { background: var(--surface-2) !important; transform: translateY(-1px) !important; }
+
+        /* 진행 막대 */
+        .pet-track, .rank-bar { background: var(--surface-2) !important; border-radius: 999px !important; }
+        .pet-fill { background: linear-gradient(90deg, var(--brand), var(--brand-lt)) !important;
+                    box-shadow: none !important; }
+
+        .divider { background: var(--line) !important; }
+        .row:hover { background: var(--surface-2) !important; }
+        .modal-bd { background: rgba(59, 49, 40, .5) !important; backdrop-filter: blur(3px) !important; }
+        .modal-card { border-radius: 20px !important;
+                      box-shadow: 0 16px 44px -12px rgba(80, 60, 35, .3) !important; }
+        .toast { border-radius: var(--r) !important;
+                 box-shadow: 0 6px 18px -4px rgba(120, 92, 54, .22) !important; }
+        .live-dot, .pet-ping, .spin-ring { box-shadow: none !important; }
+
+        .eyebrow { letter-spacing: .09em !important; color: var(--txt-faint) !important; font-weight: 700 !important; }
+
+        /* 모서리 — 각지지 않게 넉넉히 */
+        [class*="rounded-[28px]"], [class*="rounded-[24px]"], .rounded-3xl { border-radius: 22px !important; }
+        .rounded-2xl { border-radius: 16px !important; }
+        .rounded-xl  { border-radius: 12px !important; }
+
+        .reveal, .reveal-x { animation-duration: .22s !important; }
     </style>
     <script>
         // 첫 페인트 전에 테마를 적용해 깜빡임을 없앤다.
         (function () {
             try {
                 var t = localStorage.getItem('ppirit_theme');
-                if (!t) t = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+                if (!t) t = 'light';
                 document.documentElement.setAttribute('data-theme', t);
-            } catch (e) { document.documentElement.setAttribute('data-theme', 'dark'); }
+            } catch (e) { document.documentElement.setAttribute('data-theme', 'light'); }
         })();
     </script>
 </head>
@@ -1223,6 +1410,560 @@
             </div>
         );
 
+        /* ─────────────────────────────────────────────────────────────
+           영어 단어장
+             사진 → 글자 인식 → 단어 고르기 → 뜻 붙여 저장 → 플래시카드 암기.
+
+           글자 인식은 Tesseract.js 로 브라우저 안에서 끝낸다.
+           사진이 서버로 올라가지 않으므로 저장 비용도, 사진 유출 걱정도 없다.
+           뜻은 vocab-dict.js 의 고교 필수 영단어에서 자동으로 찾고,
+           없으면 학생이 직접 적어 넣는다.
+           ───────────────────────────────────────────────────────────── */
+        const vocabPath = (uid) => ['artifacts', window.appId, 'public', 'data', 'users', uid, 'vocab'];
+
+        const VOCAB_TABS = [
+            { key: 'scan', label: '사진에서 담기', icon: 'fa-camera' },
+            { key: 'list', label: '내 단어장',     icon: 'fa-list' },
+            { key: 'quiz', label: '암기하기',      icon: 'fa-layer-group' }
+        ];
+
+        const VocabPage = ({ user, showToast, requireVerified }) => {
+            const [mode, setMode] = useState('scan');
+            const [words, setWords] = useState([]);
+            const [loading, setLoading] = useState(true);
+
+            // 사진에서 담기
+            const [imgUrl, setImgUrl] = useState(null);
+            const [ocrBusy, setOcrBusy] = useState(false);
+            const [ocrProgress, setOcrProgress] = useState(0);
+            const [ocrStage, setOcrStage] = useState('');
+            const [found, setFound] = useState([]);
+            const [picked, setPicked] = useState({});
+            const [hideEasy, setHideEasy] = useState(true);
+            const [saving, setSaving] = useState(false);
+            const fileRef = useRef(null);
+
+            // 내 단어장
+            const [query, setQuery] = useState('');
+            const [filter, setFilter] = useState('all');
+            const [editWord, setEditWord] = useState(null);
+            const [editMeaning, setEditMeaning] = useState('');
+
+            // 암기하기
+            const [quizList, setQuizList] = useState([]);
+            const [quizIdx, setQuizIdx] = useState(0);
+            const [flipped, setFlipped] = useState(false);
+
+            const fm = () => window.firebaseMethods;
+
+            /* 내 단어장 실시간 구독 — 다른 기기에서 담아도 곧바로 따라온다 */
+            useEffect(() => {
+                const m = fm();
+                if (!m || !window.db || !user?.uid) { setWords([]); setLoading(false); return; }
+                setLoading(true);
+                const unsub = m.onSnapshot(
+                    m.collection(window.db, ...vocabPath(user.uid)),
+                    (snap) => {
+                        const list = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                        list.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+                        setWords(list);
+                        setLoading(false);
+                    },
+                    () => setLoading(false)
+                );
+                return () => { try { unsub && unsub(); } catch (e) {} };
+            }, [user?.uid]);
+
+            /* 미리보기로 만든 blob URL 은 반드시 되돌려준다 */
+            useEffect(() => () => { if (imgUrl) URL.revokeObjectURL(imgUrl); }, [imgUrl]);
+
+            const savedSet = new Set(words.map(w => w.word));
+
+            /* ── 사진에서 단어 뽑기 ───────────────────────────── */
+            const handlePickPhoto = async (e) => {
+                const file = e.target.files && e.target.files[0];
+                e.target.value = '';
+                if (!file) return;
+                if (!file.type.startsWith('image/')) return showToast("이미지 파일만 올릴 수 있습니다.", "error");
+                if (file.size > 12 * 1024 * 1024) return showToast("사진이 너무 큽니다. 12MB 아래로 줄여주세요.", "error");
+                if (!window.Tesseract) return showToast("글자 인식 모듈을 아직 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.", "error");
+
+                if (imgUrl) URL.revokeObjectURL(imgUrl);
+                setImgUrl(URL.createObjectURL(file));
+                setFound([]); setPicked({});
+                setOcrBusy(true); setOcrProgress(0); setOcrStage('사진을 읽는 중');
+
+                try {
+                    const res = await window.Tesseract.recognize(file, 'eng', {
+                        logger: (m) => {
+                            if (m.status === 'loading language traineddata') setOcrStage('영어 인식 데이터 준비 중');
+                            else if (m.status === 'recognizing text') setOcrStage('글자를 알아보는 중');
+                            if (typeof m.progress === 'number') setOcrProgress(Math.round(m.progress * 100));
+                        }
+                    });
+                    const text = (res && res.data && res.data.text) || '';
+                    const tokens = text.toLowerCase().match(/[a-z]{3,}/g) || [];
+
+                    const seen = new Map();
+                    tokens.forEach((t) => {
+                        const hit = window.vocabLookup(t);
+                        const base = hit ? hit.base : t;
+                        if (seen.has(base)) return;
+                        seen.set(base, {
+                            word: base,
+                            meaning: hit ? hit.meaning : '',
+                            easy: window.vocabIsEasy(base)
+                        });
+                    });
+
+                    // 어려운 단어를 앞에, 그 안에서는 알파벳순으로
+                    const list = Array.from(seen.values()).sort((a, b) =>
+                        a.easy === b.easy ? a.word.localeCompare(b.word) : (a.easy ? 1 : -1)
+                    );
+                    setFound(list);
+
+                    // 사전에 뜻이 있고 아직 안 담은 단어는 미리 골라 둔다
+                    const pre = {};
+                    list.forEach(it => { if (!it.easy && it.meaning && !savedSet.has(it.word)) pre[it.word] = true; });
+                    setPicked(pre);
+
+                    if (!list.length) showToast("사진에서 영어 단어를 찾지 못했습니다. 더 밝고 또렷한 사진으로 시도해 보세요.", "error");
+                    else showToast(`영어 단어 ${list.length}개를 찾았습니다.`);
+                } catch (err) {
+                    showToast("사진에서 글자를 읽지 못했습니다. 다른 사진으로 시도해 주세요.", "error");
+                } finally {
+                    setOcrBusy(false); setOcrProgress(0); setOcrStage('');
+                }
+            };
+
+            const togglePick = (w) => setPicked(prev => {
+                const next = { ...prev };
+                if (next[w]) delete next[w]; else next[w] = true;
+                return next;
+            });
+
+            const visibleFound = hideEasy ? found.filter(f => !f.easy) : found;
+            const pickedCount = Object.keys(picked).length;
+
+            /* ── 고른 단어를 단어장에 담기 ─────────────────────── */
+            const savePicked = async () => {
+                if (requireVerified && !requireVerified()) return;
+                const m = fm();
+                if (!m || !window.db || !user?.uid) return showToast("서버에 연결할 수 없습니다.", "error");
+
+                const items = found.filter(f => picked[f.word] && !savedSet.has(f.word));
+                if (!items.length) return showToast("담을 단어를 먼저 선택해 주세요.", "error");
+
+                setSaving(true);
+                try {
+                    const batch = m.writeBatch(window.db);
+                    const now = Date.now();
+                    items.forEach((it) => {
+                        const ref = m.doc(window.db, ...vocabPath(user.uid), it.word);
+                        batch.set(ref, {
+                            word: it.word,
+                            meaning: it.meaning || '',
+                            known: false,
+                            createdAt: now
+                        });
+                    });
+                    await batch.commit();
+                    setPicked({});
+                    showToast(`${items.length}개를 단어장에 담았습니다.`);
+                    setMode('list');
+                } catch (err) {
+                    showToast("단어를 저장하지 못했습니다. 잠시 후 다시 시도해 주세요.", "error");
+                } finally {
+                    setSaving(false);
+                }
+            };
+
+            /* ── 뜻 고치기 · 지우기 ────────────────────────────── */
+            const openEdit = (w) => { setEditWord(w); setEditMeaning(w.meaning || ''); };
+
+            const saveMeaning = async () => {
+                if (requireVerified && !requireVerified()) return;
+                const m = fm();
+                if (!m || !editWord || !user?.uid) return;
+                try {
+                    await m.updateDoc(m.doc(window.db, ...vocabPath(user.uid), editWord.id), { meaning: editMeaning.trim() });
+                    setEditWord(null);
+                    showToast("뜻을 저장했습니다.");
+                } catch (err) {
+                    showToast("뜻을 저장하지 못했습니다.", "error");
+                }
+            };
+
+            const removeWord = async (w) => {
+                if (requireVerified && !requireVerified()) return;
+                const m = fm();
+                if (!m || !user?.uid) return;
+                try {
+                    await m.deleteDoc(m.doc(window.db, ...vocabPath(user.uid), w.id));
+                    showToast("단어를 지웠습니다.");
+                } catch (err) {
+                    showToast("단어를 지우지 못했습니다.", "error");
+                }
+            };
+
+            const setKnown = async (w, val) => {
+                const m = fm();
+                if (!m || !user?.uid) return;
+                try {
+                    await m.updateDoc(m.doc(window.db, ...vocabPath(user.uid), w.id), { known: val });
+                } catch (err) {
+                    showToast("암기 상태를 저장하지 못했습니다.", "error");
+                }
+            };
+
+            const filtered = words.filter(w => {
+                if (filter === 'known' && !w.known) return false;
+                if (filter === 'unknown' && w.known) return false;
+                const q = query.trim().toLowerCase();
+                if (!q) return true;
+                return w.word.includes(q) || (w.meaning || '').includes(q);
+            });
+
+            const unknownCount = words.filter(w => !w.known).length;
+
+            /* ── 암기하기 ──────────────────────────────────────── */
+            const startQuiz = (scope) => {
+                const pool = scope === 'unknown' ? words.filter(w => !w.known) : words;
+                if (!pool.length) return showToast("암기할 단어가 없습니다. 먼저 사진에서 단어를 담아보세요.", "error");
+                const shuffled = pool.slice();
+                for (let i = shuffled.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+                }
+                setQuizList(shuffled); setQuizIdx(0); setFlipped(false); setMode('quiz');
+            };
+
+            const answerCard = async (knew) => {
+                const cur = quizList[quizIdx];
+                if (cur) await setKnown(cur, knew);
+                if (quizIdx + 1 >= quizList.length) {
+                    showToast("한 바퀴 다 돌았습니다. 수고했어요!");
+                    setQuizList([]); setQuizIdx(0); setFlipped(false);
+                } else {
+                    setQuizIdx(quizIdx + 1); setFlipped(false);
+                }
+            };
+
+            const card = quizList[quizIdx];
+
+            return (
+                <div className="space-y-5">
+
+                    {/* ── 요약 ────────────────────────────── */}
+                    <div className="glass rounded-3xl p-5 flex flex-col sm:flex-row gap-4 sm:items-center justify-between reveal d1">
+                        <div className="flex items-center gap-4">
+                            <div className="w-12 h-12 rounded-2xl grid place-items-center shrink-0"
+                                 style={{ background: 'color-mix(in srgb, var(--lime) 12%, transparent)' }}>
+                                <i className="fa-solid fa-book-open text-lg" style={{ color: 'var(--brand-lt)' }}></i>
+                            </div>
+                            <div>
+                                <div className="eyebrow text-[9px] mb-1">Vocabulary</div>
+                                <p className="text-[15px] font-extrabold tracking-tight">
+                                    담은 단어 {words.length}개
+                                    <span className="ml-2 text-xs font-bold" style={{ color: 'var(--txt-faint)' }}>
+                                        아직 못 외운 단어 {unknownCount}개
+                                    </span>
+                                </p>
+                            </div>
+                        </div>
+                        <div className="seg" style={{ gridTemplateColumns: `repeat(${VOCAB_TABS.length}, minmax(0,1fr))`, maxWidth: '360px' }}>
+                            <div className="seg-ind"
+                                 style={{ width: `calc((100% - 10px) / ${VOCAB_TABS.length})`,
+                                          transform: `translateX(${Math.max(0, VOCAB_TABS.findIndex(t => t.key === mode)) * 100}%)` }}></div>
+                            {VOCAB_TABS.map(t => (
+                                <button key={t.key} onClick={() => setMode(t.key)} className={`seg-btn ${mode === t.key ? 'on' : ''}`}>
+                                    <i className={`fa-solid ${t.icon} mr-1.5 text-[11px]`}></i>{t.label}
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+
+                    {/* ── 사진에서 담기 ───────────────────── */}
+                    {mode === 'scan' && (
+                        <div className="space-y-5">
+                            <div className="glass rounded-3xl p-6 reveal d1">
+                                <input ref={fileRef} type="file" accept="image/*" capture="environment"
+                                       onChange={handlePickPhoto} className="hidden" />
+
+                                {!imgUrl && (
+                                    <div className="text-center py-8">
+                                        <div className="w-16 h-16 mx-auto mb-5 rounded-2xl grid place-items-center glass">
+                                            <i className="fa-solid fa-camera text-2xl" style={{ color: 'var(--txt-faint)' }}></i>
+                                        </div>
+                                        <p className="text-sm font-extrabold mb-1.5">교과서·문제집을 찍어서 올려보세요</p>
+                                        <p className="text-xs leading-relaxed mb-6" style={{ color: 'var(--txt-faint)' }}>
+                                            사진 속 영어 단어를 찾아 뜻을 붙여드립니다.<br />
+                                            사진은 서버에 저장되지 않고 이 기기 안에서만 처리됩니다.
+                                        </p>
+                                        <button onClick={() => fileRef.current && fileRef.current.click()} disabled={ocrBusy}
+                                                className="btn btn-primary font-bold px-7 py-3 rounded-2xl text-sm inline-flex items-center gap-2">
+                                            <i className="fa-solid fa-image"></i>사진 선택하기
+                                        </button>
+                                    </div>
+                                )}
+
+                                {imgUrl && (
+                                    <div className="space-y-4">
+                                        <div className="rounded-2xl overflow-hidden border" style={{ borderColor: 'var(--line)' }}>
+                                            <img src={imgUrl} alt="올린 사진" className="w-full max-h-72 object-contain"
+                                                 style={{ background: 'var(--surface)' }} />
+                                        </div>
+                                        <div className="flex gap-2.5">
+                                            <button onClick={() => fileRef.current && fileRef.current.click()} disabled={ocrBusy}
+                                                    className="btn btn-ghost font-bold px-5 py-2.5 rounded-xl text-xs flex items-center gap-2">
+                                                <i className="fa-solid fa-rotate"></i>다른 사진
+                                            </button>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {ocrBusy && (
+                                    <div className="mt-5">
+                                        <div className="flex justify-between text-[11px] font-bold mb-2">
+                                            <span style={{ color: 'var(--txt-dim)' }}>{ocrStage}</span>
+                                            <span className="font-mono" style={{ color: 'var(--brand-lt)' }}>{ocrProgress}%</span>
+                                        </div>
+                                        <div className="h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--surface)' }}>
+                                            <div className="h-full rounded-full transition-all"
+                                                 style={{ width: `${ocrProgress}%`, background: 'var(--lime)' }}></div>
+                                        </div>
+                                        <p className="text-[11px] mt-2.5" style={{ color: 'var(--txt-faint)' }}>
+                                            처음 한 번은 인식 데이터를 내려받느라 조금 느릴 수 있습니다.
+                                        </p>
+                                    </div>
+                                )}
+                            </div>
+
+                            {found.length > 0 && !ocrBusy && (
+                                <div className="glass rounded-3xl p-6 reveal">
+                                    <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+                                        <div>
+                                            <div className="eyebrow text-[9px] mb-1">Found · {visibleFound.length} words</div>
+                                            <p className="text-[13px] font-extrabold">담고 싶은 단어를 눌러 고르세요</p>
+                                        </div>
+                                        <button onClick={() => setHideEasy(!hideEasy)}
+                                                className={`chip ${hideEasy ? '' : 'opacity-60'}`}
+                                                style={hideEasy ? { color: 'var(--brand-lt)', borderColor: 'var(--lime)' } : {}}>
+                                            <i className={`fa-solid ${hideEasy ? 'fa-eye-slash' : 'fa-eye'} mr-1.5 text-[10px]`}></i>
+                                            쉬운 단어 숨기기
+                                        </button>
+                                    </div>
+
+                                    <div className="flex flex-wrap gap-2">
+                                        {visibleFound.map((f) => {
+                                            const already = savedSet.has(f.word);
+                                            const on = !!picked[f.word];
+                                            return (
+                                                <button key={f.word} type="button" disabled={already}
+                                                        onClick={() => togglePick(f.word)}
+                                                        title={f.meaning || '사전에 없는 단어 — 뜻은 직접 적어야 합니다'}
+                                                        className="chip text-left"
+                                                        style={already
+                                                            ? { opacity: .45, cursor: 'default' }
+                                                            : on
+                                                                ? { background: 'color-mix(in srgb, var(--lime) 16%, transparent)', borderColor: 'var(--lime)', color: 'var(--lime-ink)' }
+                                                                : {}}>
+                                                    {already && <i className="fa-solid fa-check mr-1.5 text-[9px]"></i>}
+                                                    {on && !already && <i className="fa-solid fa-plus mr-1.5 text-[9px]"></i>}
+                                                    <span className="font-mono">{f.word}</span>
+                                                    {f.meaning && <span className="ml-1.5 font-semibold opacity-70">{f.meaning.split(',')[0]}</span>}
+                                                    {!f.meaning && <span className="ml-1.5 font-semibold opacity-50">뜻 직접 입력</span>}
+                                                </button>
+                                            );
+                                        })}
+                                        {visibleFound.length === 0 && (
+                                            <p className="text-xs py-6 w-full text-center" style={{ color: 'var(--txt-faint)' }}>
+                                                어려운 단어가 없네요. '쉬운 단어 숨기기'를 꺼보세요.
+                                            </p>
+                                        )}
+                                    </div>
+
+                                    <div className="mt-6 pt-5 border-t flex flex-wrap items-center justify-between gap-3"
+                                         style={{ borderColor: 'var(--line)' }}>
+                                        <span className="text-xs font-bold" style={{ color: 'var(--txt-faint)' }}>
+                                            {pickedCount}개 선택됨
+                                        </span>
+                                        <button onClick={savePicked} disabled={saving || pickedCount === 0}
+                                                className="btn btn-primary font-bold px-6 py-3 rounded-2xl text-sm flex items-center gap-2"
+                                                style={pickedCount === 0 ? { opacity: .5 } : {}}>
+                                            <i className={`fa-solid ${saving ? 'fa-spinner fa-spin' : 'fa-download'}`}></i>
+                                            {saving ? '담는 중' : `${pickedCount}개 단어장에 담기`}
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* ── 내 단어장 ───────────────────────── */}
+                    {mode === 'list' && (
+                        <div className="space-y-5">
+                            <div className="glass rounded-3xl p-4 flex flex-col sm:flex-row gap-3 items-center reveal d1">
+                                <div className="w-full relative">
+                                    <span className="absolute inset-y-0 left-0 flex items-center pl-4" style={{ color: 'var(--txt-faint)' }}>
+                                        <i className="fa-solid fa-magnifying-glass text-xs"></i>
+                                    </span>
+                                    <input type="text" placeholder="단어나 뜻으로 검색" value={query}
+                                           onChange={(e) => setQuery(e.target.value)} className="fld pl-11" />
+                                </div>
+                                <div className="flex gap-2 shrink-0">
+                                    {[['all', '전체'], ['unknown', '모르는'], ['known', '외운']].map(([k, label]) => (
+                                        <button key={k} onClick={() => setFilter(k)} className="chip"
+                                                style={filter === k ? { background: 'color-mix(in srgb, var(--lime) 16%, transparent)', borderColor: 'var(--lime)', color: 'var(--lime-ink)' } : {}}>
+                                            {label}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+
+                            {loading ? (
+                                <div className="glass rounded-3xl">
+                                    <EmptyState icon="fa-spinner" title="단어장을 불러오는 중" />
+                                </div>
+                            ) : filtered.length === 0 ? (
+                                <div className="glass rounded-3xl">
+                                    <EmptyState icon="fa-book-open"
+                                                title={words.length === 0 ? "아직 담은 단어가 없습니다" : "조건에 맞는 단어가 없습니다"}
+                                                desc={words.length === 0 ? "'사진에서 담기'에서 교과서를 찍어보세요." : "검색어나 필터를 바꿔보세요."} />
+                                </div>
+                            ) : (
+                                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                    {filtered.map((w, i) => (
+                                        <div key={w.id} className="glass topline lift rounded-[22px] p-5 reveal"
+                                             style={{ animationDelay: `${Math.min(i, 9) * .05}s` }}>
+                                            <div className="flex items-start justify-between gap-3 mb-3">
+                                                <p className="text-[17px] font-extrabold font-mono tracking-tight break-all">{w.word}</p>
+                                                <span className={`tag ${w.known ? 'tag-brand' : 'tag-neutral'} shrink-0`}>
+                                                    {w.known ? '외움' : '모름'}
+                                                </span>
+                                            </div>
+                                            <p className="text-[13px] leading-relaxed mb-4 min-h-[20px]"
+                                               style={{ color: w.meaning ? 'var(--txt-dim)' : 'var(--txt-faint)' }}>
+                                                {w.meaning || '뜻이 아직 없습니다'}
+                                            </p>
+                                            <div className="flex gap-2 pt-3 border-t" style={{ borderColor: 'var(--line)' }}>
+                                                <button onClick={() => setKnown(w, !w.known)}
+                                                        className="btn btn-ghost flex-1 py-2 rounded-xl text-[11px] font-bold">
+                                                    <i className={`fa-solid ${w.known ? 'fa-rotate-left' : 'fa-check'} mr-1.5 text-[10px]`}></i>
+                                                    {w.known ? '다시 외우기' : '외웠어요'}
+                                                </button>
+                                                <button onClick={() => openEdit(w)} title="뜻 고치기"
+                                                        className="btn btn-ghost px-3 py-2 rounded-xl text-[11px] font-bold">
+                                                    <i className="fa-solid fa-pen text-[10px]"></i>
+                                                </button>
+                                                <button onClick={() => removeWord(w)} title="단어 지우기"
+                                                        className="btn btn-ghost px-3 py-2 rounded-xl text-[11px] font-bold"
+                                                        style={{ color: 'var(--rose)' }}>
+                                                    <i className="fa-solid fa-trash text-[10px]"></i>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* ── 암기하기 ────────────────────────── */}
+                    {mode === 'quiz' && (
+                        <div className="space-y-5">
+                            {!card ? (
+                                <div className="glass rounded-3xl p-8 text-center reveal d1">
+                                    <div className="w-16 h-16 mx-auto mb-5 rounded-2xl grid place-items-center glass">
+                                        <i className="fa-solid fa-layer-group text-2xl" style={{ color: 'var(--txt-faint)' }}></i>
+                                    </div>
+                                    <p className="text-sm font-extrabold mb-1.5">플래시카드로 외워봅시다</p>
+                                    <p className="text-xs leading-relaxed mb-6" style={{ color: 'var(--txt-faint)' }}>
+                                        영어 단어를 보고 뜻을 떠올린 뒤 카드를 뒤집어 확인하세요.
+                                    </p>
+                                    <div className="flex flex-wrap gap-2.5 justify-center">
+                                        <button onClick={() => startQuiz('unknown')}
+                                                className="btn btn-primary font-bold px-6 py-3 rounded-2xl text-sm flex items-center gap-2">
+                                            <i className="fa-solid fa-play"></i>못 외운 단어만 ({unknownCount})
+                                        </button>
+                                        <button onClick={() => startQuiz('all')}
+                                                className="btn btn-ghost font-bold px-6 py-3 rounded-2xl text-sm flex items-center gap-2">
+                                            <i className="fa-solid fa-shuffle"></i>전체 ({words.length})
+                                        </button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="space-y-4">
+                                    <div className="flex items-center justify-between px-1">
+                                        <span className="eyebrow text-[9px]">{quizIdx + 1} / {quizList.length}</span>
+                                        <button onClick={() => { setQuizList([]); setQuizIdx(0); setFlipped(false); }}
+                                                className="chip text-[10px]">
+                                            <i className="fa-solid fa-xmark mr-1.5 text-[9px]"></i>그만하기
+                                        </button>
+                                    </div>
+                                    <div className="h-1 rounded-full overflow-hidden" style={{ background: 'var(--surface)' }}>
+                                        <div className="h-full rounded-full transition-all"
+                                             style={{ width: `${((quizIdx) / quizList.length) * 100}%`, background: 'var(--lime)' }}></div>
+                                    </div>
+
+                                    <button type="button" onClick={() => setFlipped(!flipped)}
+                                            className="glass topline shine w-full rounded-[28px] p-10 min-h-[220px] flex flex-col items-center justify-center text-center reveal">
+                                        {!flipped ? (
+                                            <>
+                                                <p className="text-[32px] sm:text-[38px] font-extrabold font-mono tracking-tight break-all">{card.word}</p>
+                                                <p className="text-[11px] mt-4 font-bold" style={{ color: 'var(--txt-faint)' }}>
+                                                    <i className="fa-solid fa-hand-pointer mr-1.5"></i>눌러서 뜻 보기
+                                                </p>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <p className="text-lg sm:text-xl font-extrabold leading-relaxed" style={{ color: 'var(--brand-lt)' }}>
+                                                    {card.meaning || '뜻이 아직 없습니다'}
+                                                </p>
+                                                <p className="text-xs mt-3 font-mono font-bold" style={{ color: 'var(--txt-faint)' }}>{card.word}</p>
+                                            </>
+                                        )}
+                                    </button>
+
+                                    {flipped && (
+                                        <div className="flex gap-3">
+                                            <button onClick={() => answerCard(false)}
+                                                    className="btn btn-ghost flex-1 font-bold py-3.5 rounded-2xl text-sm flex items-center justify-center gap-2">
+                                                <i className="fa-solid fa-rotate-left"></i>아직 몰라요
+                                            </button>
+                                            <button onClick={() => answerCard(true)}
+                                                    className="btn btn-primary flex-1 font-bold py-3.5 rounded-2xl text-sm flex items-center justify-center gap-2">
+                                                <i className="fa-solid fa-check"></i>외웠어요
+                                            </button>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+                        </div>
+                    )}
+
+                    {/* ── 뜻 고치기 ───────────────────────── */}
+                    {editWord && (
+                        <div className="modal-bd fixed inset-0 bg-black/70 backdrop-blur-md flex items-center justify-center z-[100] p-4"
+                             onClick={() => setEditWord(null)}>
+                            <div className="modal-card glass-solid p-7 rounded-3xl max-w-sm w-full" onClick={(e) => e.stopPropagation()}>
+                                <div className="eyebrow text-[9px] mb-2">Edit meaning</div>
+                                <p className="text-2xl font-extrabold font-mono tracking-tight mb-5 break-all">{editWord.word}</p>
+                                <textarea value={editMeaning} onChange={(e) => setEditMeaning(e.target.value)} rows={3}
+                                          placeholder="이 단어의 뜻을 적어주세요" className="fld resize-none" autoFocus />
+                                <div className="flex gap-2.5 mt-5">
+                                    <button onClick={() => setEditWord(null)}
+                                            className="btn btn-ghost flex-1 font-bold py-3 rounded-xl text-sm">취소</button>
+                                    <button onClick={saveMeaning}
+                                            className="btn btn-primary flex-1 font-bold py-3 rounded-xl text-sm">저장</button>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
         function App() {
             const [user, setUser] = useState(null);
             const [isLoginView, setIsLoginView] = useState(true);
@@ -1331,7 +2072,7 @@
             const heroRef = useRef(null);
 
             // 라이트 / 다크. <head> 부트 스크립트가 이미 첫 값을 심어둔다.
-            const [theme, setTheme] = useState(() => document.documentElement.getAttribute('data-theme') || 'dark');
+            const [theme, setTheme] = useState(() => document.documentElement.getAttribute('data-theme') || 'light');
             const toggleTheme = () => {
                 const next = theme === 'light' ? 'dark' : 'light';
                 setTheme(next);
@@ -2565,10 +3306,6 @@
                                     {BRAND}
                                 </h1>
 
-                                <h2 className="mt-8 text-[2rem] xl:text-[2.4rem] font-extrabold leading-[1.2] tracking-[-0.04em] reveal d4">
-                                    혼자 하면 30분,<br />
-                                    같이 하면 <span className="neon-pink">3시간</span>.
-                                </h2>
                                 <p className="mt-5 text-[15px] leading-relaxed reveal d5" style={{ color: 'var(--txt-dim)' }}>
                                     타이머를 켜면 지금 공부 중인 친구들이 보입니다.<br />
                                     자료는 학년·과목별로 정리되어 있고, 막히면 바로 물어보면 돼요.
@@ -2602,7 +3339,6 @@
                                     <div className="flex justify-end mb-2">{themeToggle()}</div>
                                     <div className="inline-block mb-4"><Mark size={58} accent /></div>
                                     <div className="wordmark text-[3rem] leading-none sign-on neon-lime">{BRAND}</div>
-                                    <p className="text-sm font-extrabold mt-4">혼자 하면 30분, 같이 하면 <span className="neon-pink">3시간</span>.</p>
                                     <p className="eyebrow text-[9px] mt-3">도계고등학교</p>
                                 </div>
 
@@ -2774,6 +3510,7 @@
                 { key: 'pet',       label: '내 캐릭터',     short: '캐릭터', icon: 'fa-paw' },
                 { key: 'studyRoom', label: '온라인 자습실', short: '자습실', icon: 'fa-stopwatch' },
                 { key: 'materials', label: '학습 자료실',   short: '자료실', icon: 'fa-folder-open' },
+                { key: 'vocab',     label: '영어 단어장',   short: '단어장', icon: 'fa-book-open' },
                 { key: 'qna',       label: '요구사항',      short: '요구',   icon: 'fa-circle-question' },
                 { key: 'pinball',   label: '핀볼 추첨',     short: '핀볼',   icon: 'fa-trophy' }
             ];
@@ -3277,6 +4014,11 @@
                         )}
 
                         {/* ── 학습 자료실 ────────────────── */}
+                        {/* ── 영어 단어장 ────────────────── */}
+                        {activeMainTab === 'vocab' && (
+                            <VocabPage user={user} showToast={showToast} requireVerified={requireVerified} />
+                        )}
+
                         {activeMainTab === 'materials' && (
                             <div className="space-y-5">
                                 <div className="glass rounded-3xl p-4 flex flex-col sm:flex-row gap-3 items-center reveal d1">
