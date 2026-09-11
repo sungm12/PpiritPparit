@@ -835,7 +835,7 @@
         } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
         import { getFirestore, initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
          doc, getDoc, setDoc, updateDoc, deleteDoc, collection, addDoc, onSnapshot, writeBatch, getDocs,
-         query, orderBy, limit, documentId } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+         query, orderBy, limit, documentId, where } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
         import { getStorage, ref, uploadBytesResumable, getDownloadURL, deleteObject } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-storage.js";
 
         const firebaseConfig = {
@@ -892,6 +892,7 @@
                 orderBy,
                 limit,
                 documentId,
+                where,
                 ref,
                 uploadBytesResumable,
                 getDownloadURL,
@@ -1628,7 +1629,8 @@
         const VOCAB_TABS = [
             { key: 'scan', label: '단어 담기', icon: 'fa-camera' },
             { key: 'list', label: '내 단어장',     icon: 'fa-list' },
-            { key: 'quiz', label: '암기하기',      icon: 'fa-layer-group' }
+            { key: 'quiz', label: '암기하기',      icon: 'fa-layer-group' },
+            { key: 'spell', label: '철자 쓰기',    icon: 'fa-keyboard' }
         ];
 
         const VocabPage = ({ user, showToast, requireVerified, sharedCount = 0 }) => {
@@ -1663,6 +1665,14 @@
             const [quizList, setQuizList] = useState([]);
             const [quizIdx, setQuizIdx] = useState(0);
             const [flipped, setFlipped] = useState(false);
+
+            // 철자 쓰기
+            const [spellList, setSpellList] = useState([]);
+            const [spellIdx, setSpellIdx] = useState(0);
+            const [spellInput, setSpellInput] = useState("");
+            const [spellState, setSpellState] = useState('typing');  // typing | right | wrong
+            const [spellScore, setSpellScore] = useState({ right: 0, total: 0 });
+            const [spellHint, setSpellHint] = useState(false);
 
             const fm = () => window.firebaseMethods;
 
@@ -1933,6 +1943,50 @@
 
             const card = quizList[quizIdx];
 
+            /* ── 철자 쓰기 ──────────────────────────────────
+               뜻을 보고 철자를 직접 친다. 눈으로 훑는 것보다 훨씬 남는다.
+               숙어는 뺀다 — 여러 낱말을 통째로 치게 할 수는 없다. */
+            const startSpell = (scope) => {
+                const pool = (scope === 'unknown' ? words.filter(w => !w.known) : words)
+                    .filter(w => w && w.word && w.meaning && /^[a-z]+$/.test(w.word));
+                if (!pool.length) {
+                    return showToast("철자를 쓸 단어가 없습니다. 뜻이 적힌 한 낱말짜리가 필요해요.", "error");
+                }
+                const shuffled = pool.slice();
+                for (let i = shuffled.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [shuffled[i], shuffled[j]] = [shuffled[j], shuffled[i]];
+                }
+                setSpellList(shuffled.slice(0, 30));
+                setSpellIdx(0); setSpellInput(""); setSpellState('typing');
+                setSpellScore({ right: 0, total: 0 }); setSpellHint(false);
+                setMode('spell');
+            };
+
+            const spellCard = spellList[spellIdx];
+
+            const checkSpell = () => {
+                if (!spellCard || spellState !== 'typing') return;
+                const got = spellInput.trim().toLowerCase();
+                if (!got) return;
+                const ok = got === spellCard.word;
+                setSpellState(ok ? 'right' : 'wrong');
+                setSpellScore(s => ({ right: s.right + (ok ? 1 : 0), total: s.total + 1 }));
+                // 맞힌 것은 외운 것으로 표시한다. 틀린 것은 건드리지 않는다 —
+                // 이미 외웠다고 표시해 둔 것을 한 번 틀렸다고 되돌리면 억울하다.
+                if (ok && !spellCard.known) setKnown(spellCard, true);
+            };
+
+            const nextSpell = () => {
+                if (spellIdx + 1 >= spellList.length) {
+                    showToast(`${spellList.length}개 중 ${spellScore.right}개를 맞혔어요.`);
+                    setSpellList([]); setSpellIdx(0);
+                } else {
+                    setSpellIdx(spellIdx + 1);
+                }
+                setSpellInput(""); setSpellState('typing'); setSpellHint(false);
+            };
+
             return (
                 <div className="space-y-5">
 
@@ -2145,6 +2199,117 @@
                         </div>
                     )}
 
+                    {/* ── 철자 쓰기 ───────────────────────
+                        뜻을 보고 철자를 직접 친다. 카드를 뒤집어 보기만 하는 것보다 남는다. */}
+                    {mode === 'spell' && (
+                        <div className="space-y-5">
+                            {!spellCard ? (
+                                <div className="glass rounded-3xl p-8 text-center reveal d1">
+                                    <div className="w-16 h-16 mx-auto mb-5 rounded-2xl grid place-items-center glass">
+                                        <i className="fa-solid fa-keyboard text-2xl" style={{ color: 'var(--txt-faint)' }}></i>
+                                    </div>
+                                    <p className="text-sm font-extrabold mb-1.5">뜻을 보고 철자를 써보세요</p>
+                                    <p className="text-xs leading-relaxed mb-6" style={{ color: 'var(--txt-faint)' }}>
+                                        한 번에 30개씩 나옵니다. 맞히면 '외운 단어'로 넘어가요.<br />
+                                        숙어는 나오지 않습니다.
+                                    </p>
+                                    <div className="flex flex-wrap gap-2.5 justify-center">
+                                        <button onClick={() => startSpell('unknown')}
+                                                className="btn btn-primary font-bold px-6 py-3 rounded-2xl text-sm flex items-center gap-2">
+                                            <i className="fa-solid fa-play"></i>못 외운 단어만
+                                        </button>
+                                        <button onClick={() => startSpell('all')}
+                                                className="btn btn-ghost font-bold px-6 py-3 rounded-2xl text-sm flex items-center gap-2">
+                                            <i className="fa-solid fa-shuffle"></i>전체에서
+                                        </button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="space-y-4">
+                                    <div className="flex items-center justify-between px-1">
+                                        <span className="eyebrow text-[9px]">{spellIdx + 1} / {spellList.length}</span>
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-[11px] font-bold" style={{ color: 'var(--txt-faint)' }}>
+                                                <span className="font-mono" style={{ color: 'var(--lime-ink)' }}>{spellScore.right}</span>
+                                                {' / '}
+                                                <span className="font-mono">{spellScore.total}</span>
+                                            </span>
+                                            <button onClick={() => { setSpellList([]); setSpellIdx(0); }} className="chip text-[10px]">
+                                                <i className="fa-solid fa-xmark mr-1.5 text-[9px]"></i>그만하기
+                                            </button>
+                                        </div>
+                                    </div>
+
+                                    <div className="h-1 rounded-full overflow-hidden" style={{ background: 'var(--surface)' }}>
+                                        <div className="h-full rounded-full transition-all"
+                                             style={{ width: `${(spellIdx / spellList.length) * 100}%`, background: 'var(--lime)' }}></div>
+                                    </div>
+
+                                    <div className="glass rounded-[28px] p-8 sm:p-10 text-center">
+                                        <div className="eyebrow text-[9px] mb-4">이 뜻을 가진 단어는?</div>
+                                        <p className="text-xl sm:text-2xl font-extrabold leading-relaxed mb-2">
+                                            {spellCard.meaning}
+                                        </p>
+                                        <p className="font-mono text-sm mb-7" style={{ color: 'var(--txt-faint)' }}>
+                                            {spellHint
+                                                ? spellCard.word[0] + '·'.repeat(Math.max(0, spellCard.word.length - 1))
+                                                : `${spellCard.word.length}글자`}
+                                        </p>
+
+                                        <input type="text" value={spellInput} autoFocus autoComplete="off"
+                                               autoCapitalize="off" spellCheck="false"
+                                               disabled={spellState !== 'typing'}
+                                               onChange={(e) => setSpellInput(e.target.value)}
+                                               onKeyDown={(e) => {
+                                                   if (e.key !== 'Enter') return;
+                                                   if (spellState === 'typing') checkSpell(); else nextSpell();
+                                               }}
+                                               placeholder="영어로 써보세요"
+                                               className="fld text-center font-mono text-lg"
+                                               style={spellState === 'right'
+                                                   ? { borderColor: 'var(--lime)', color: 'var(--lime-ink)' }
+                                                   : spellState === 'wrong'
+                                                       ? { borderColor: 'var(--rose)', color: 'var(--rose)' } : {}} />
+
+                                        {spellState === 'wrong' && (
+                                            <p className="text-sm mt-4 font-bold">
+                                                <span style={{ color: 'var(--txt-faint)' }}>정답은 </span>
+                                                <span className="font-mono" style={{ color: 'var(--lime-ink)' }}>{spellCard.word}</span>
+                                            </p>
+                                        )}
+                                        {spellState === 'right' && (
+                                            <p className="text-sm mt-4 font-extrabold" style={{ color: 'var(--lime-ink)' }}>
+                                                <i className="fa-solid fa-check mr-1.5"></i>맞았어요
+                                            </p>
+                                        )}
+
+                                        <div className="flex gap-2.5 justify-center mt-7 flex-wrap">
+                                            {spellState === 'typing' ? (
+                                                <>
+                                                    <button onClick={() => setSpellHint(true)} disabled={spellHint}
+                                                            className="btn btn-ghost font-bold px-5 py-2.5 rounded-xl text-xs"
+                                                            style={spellHint ? { opacity: .45 } : {}}>
+                                                        <i className="fa-solid fa-lightbulb mr-1.5"></i>첫 글자
+                                                    </button>
+                                                    <button onClick={checkSpell} disabled={!spellInput.trim()}
+                                                            className="btn btn-primary font-bold px-6 py-2.5 rounded-xl text-xs"
+                                                            style={!spellInput.trim() ? { opacity: .5 } : {}}>
+                                                        확인
+                                                    </button>
+                                                </>
+                                            ) : (
+                                                <button onClick={nextSpell}
+                                                        className="btn btn-primary font-bold px-7 py-2.5 rounded-xl text-xs">
+                                                    다음 <i className="fa-solid fa-arrow-right ml-1.5"></i>
+                                                </button>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                    )}
+
                     {/* ── 내 단어장 ───────────────────────── */}
                     {mode === 'list' && (
                         <div className="space-y-5">
@@ -2331,6 +2496,10 @@
 
             const [selectedMaterial, setSelectedMaterial] = useState(null);
             const [selectedQna, setSelectedQna] = useState(null);
+            const [replies, setReplies] = useState([]);
+            const [replyText, setReplyText] = useState("");
+            const [replyBusy, setReplyBusy] = useState(false);
+            const [newQnaPrivate, setNewQnaPrivate] = useState(false);
             const [searchQuery, setSearchQuery] = useState("");
 
             // 필터링 상태 확장
@@ -2370,6 +2539,8 @@
             // 학습부가 미리 계산해 둔 응모 명단. 학생은 이것만 읽는다.
             const [pinballRoster, setPinballRoster] = useState(null);
             const [rosterBusy, setRosterBusy] = useState(false);
+            const [myRecords, setMyRecords] = useState([]);
+            const [recTab, setRecTab] = useState('chart');   // 'chart' | 'list'
             const [sharedVocabCount, setSharedVocabCount] = useState(0);
             const [vocabSyncBusy, setVocabSyncBusy] = useState(false);
             const [sharedVocabMap, setSharedVocabMap] = useState({});
@@ -2563,7 +2734,8 @@
                             if (profile.status === 'active' && !listenersStarted.current) {
                                 listenersStarted.current = true;
                                 listenToCloudMaterials(profile.rank || 1);
-                                listenToCloudQna(profile.rank || 1);
+                                if ((profile.rank || 1) >= 2) listenToCloudQna(profile.rank || 1);
+                                else listenToQnaAsStudent(fUser.email);
                                 listenToCloudSettings();
                                 listenToLiveStudyUsers();
                                 listenToCloudUsers();
@@ -2575,6 +2747,10 @@
                                 if ((profile.rank || 1) >= 2) {
                                     studyRecordsBound.current = true;
                                     listenToStudyRecords();
+                                } else {
+                                    // 일반 학생은 자기 기록만 받는다.
+                                    // user 상태는 아직 갱신 전이라 uid 를 직접 넘긴다.
+                                    listenToMyRecords(fUser.uid);
                                 }
                             }
                         } catch (e) {
@@ -2616,6 +2792,12 @@
                         setIsStudying(true);
                         setStudyStartTime(myLiveStatus.startTime);
                         setElapsedMins(Math.floor((Date.now() - myLiveStatus.startTime) / 60000));
+
+                        // 창을 닫았다 돌아온 경우다. 그냥 두면 마무리를 안 눌러 기록을 잃는다.
+                        const mins = Math.floor((Date.now() - myLiveStatus.startTime) / 60000);
+                        if (mins >= 1) {
+                            showToast(`아직 자습 중이에요. ${Math.floor(mins/60)}시간 ${mins%60}분째 — 끝내려면 '공부 종료'를 눌러주세요.`);
+                        }
                     }
                 }
             }, [user, liveStudyUsers]);
@@ -2675,6 +2857,40 @@
                 }, () => setIsLocalMode(true));
             };
 
+            /* 요구사항 목록.
+
+               임원은 전부 받는다.
+               학생은 두 번 물어본다 — 공개 글, 그리고 내가 쓴 글.
+               파이어스토어는 '이거 또는 저거' 를 한 번에 못 물어보고,
+               서버도 그 두 조건으로만 열어 두었다.
+               둘을 받아 합치고 겹치는 것은 지운다. */
+            const qnaPublic = useRef([]);
+            const qnaMine = useRef([]);
+            const mergeQna = () => {
+                const box = new Map();
+                [...qnaPublic.current, ...qnaMine.current].forEach(q => { if (q && q.id) box.set(q.id, q); });
+                const list = Array.from(box.values());
+                list.sort((a, b) => (b.date || "").localeCompare(a.date || "") || String(b.id).localeCompare(String(a.id)));
+                setQnaList(list);
+            };
+
+            const listenToQnaAsStudent = (email) => {
+                const { collection, query, where, limit } = window.firebaseMethods;
+                const onSnapshot = trackedOnSnapshot;
+                if (!query || !where || !limit) return;
+                const colRef = collection(window.db, 'artifacts', window.appId, 'public', 'data', 'qna');
+
+                onSnapshot(query(colRef, where('private', '==', false), limit(QNA_LIMIT)), (snap) => {
+                    const rows = []; snap.forEach(d => { const v = d.data(); if (v) rows.push({ ...v, id: d.id }); });
+                    qnaPublic.current = rows; mergeQna();
+                }, () => {});
+
+                onSnapshot(query(colRef, where('authorEmail', '==', email), limit(QNA_LIMIT)), (snap) => {
+                    const rows = []; snap.forEach(d => { const v = d.data(); if (v) rows.push({ ...v, id: d.id }); });
+                    qnaMine.current = rows; mergeQna();
+                }, () => {});
+            };
+
             const listenToCloudQna = (rank) => {
                 const { collection } = window.firebaseMethods; const onSnapshot = trackedOnSnapshot;
                 const colRef = collection(window.db, 'artifacts', window.appId, 'public', 'data', 'qna');
@@ -2712,6 +2928,24 @@
                 });
             };
 
+            /* 공개·비공개를 붙이기 전에 올라온 글에는 private 필드가 없다.
+               학생 쪽 질의가 private == false 로 거르기 때문에, 그대로 두면
+               옛 글이 학생 목록에서 통째로 사라진다.
+               전부 받는 임원이 지나갈 때 조용히 채워 둔다. */
+            useEffect(() => {
+                if ((user?.rank || 1) < 2 || isLocalMode || !window.firebaseMethods) return;
+                const older = (qnaList || []).filter(q => q && typeof q.private !== 'boolean').slice(0, 50);
+                if (!older.length) return;
+                const t = setTimeout(() => {
+                    const { doc, updateDoc } = window.firebaseMethods;
+                    older.forEach(q => {
+                        updateDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'qna', q.id),
+                                  { private: false }).catch(() => {});
+                    });
+                }, 3000);
+                return () => clearTimeout(t);
+            }, [user?.rank, qnaList]);
+
             const listenToPinballRoster = () => {
                 const { doc } = window.firebaseMethods;
                 const onSnapshot = trackedOnSnapshot;
@@ -2741,18 +2975,52 @@
                 }, (error) => console.warn("유저 목록 로드 실패"));
             };
 
+            /* 타이머 상한이 8시간이다. 그보다 오래 켜져 있는 것은
+               학생이 마무리를 누르지 않고 창을 닫고 간 자리다. */
+            const LIVE_STALE_MS = 8 * 60 * 60 * 1000;
+            const isStaleLive = (r) => !r || !r.startTime || (Date.now() - r.startTime) > LIVE_STALE_MS;
+
             const listenToLiveStudyUsers = () => {
                 const { collection } = window.firebaseMethods; const onSnapshot = trackedOnSnapshot;
                 onSnapshot(collection(window.db, 'artifacts', window.appId, 'public', 'data', 'live_study'), (snapshot) => {
                     const liveList = [];
-                    snapshot.forEach((d) => { if(d.data()) liveList.push({ ...d.data(), id: d.id }); });
+                    // 닫고 간 자리는 목록에서 뺀다. 며칠째 공부 중인 사람이 보이면 안 된다.
+                    snapshot.forEach((d) => { const v = d.data(); if (v && !isStaleLive(v)) liveList.push({ ...v, id: d.id }); });
                     setLiveStudyUsers(liveList);
                 });
             };
 
+            /* 승인 기록은 해가 갈수록 쌓인다. 통째로 받으면 접속할 때마다 그만큼 읽는다.
+               최근 것만 받는다. 문서 ID 가 String(Date.now()) 이라 이름순이 곧 시간순이다.
+               더 옛 기록이 필요하면 '공부 시간 데이터' 창에서 기간을 넓혀 다시 부른다. */
+            const STUDY_RECORDS_LIMIT = 4000;
+
+            /* 내가 낸 인증 기록.
+               임원은 이미 전체를 받으므로 그걸 걸러 쓰고,
+               일반 학생만 따로 '내 것만' 질의를 건다.
+               규칙이 그 조건을 요구한다 — 조건 없이 부르면 서버가 거부한다. */
+            const listenToMyRecords = (uid) => {
+                const { collection, query, where, limit } = window.firebaseMethods;
+                const onSnapshot = trackedOnSnapshot;
+                if (!uid || !query || !where || !limit) return;
+                const colRef = collection(window.db, 'artifacts', window.appId, 'public', 'data', 'study_records');
+                const un = onSnapshot(
+                    query(colRef, where('userUid', '==', uid), limit(200)),
+                    (snap) => {
+                        const rows = [];
+                        snap.forEach(d => { const v = d.data(); if (v) rows.push({ ...v, id: d.id }); });
+                        rows.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+                        setMyRecords(rows);
+                    },
+                    () => setMyRecords([])
+                );
+                return un;
+            };
+
             const listenToStudyRecords = () => {
                 const { collection } = window.firebaseMethods; const onSnapshot = trackedOnSnapshot;
-                onSnapshot(collection(window.db, 'artifacts', window.appId, 'public', 'data', 'study_records'), (snapshot) => {
+                const colRef = collection(window.db, 'artifacts', window.appId, 'public', 'data', 'study_records');
+                onSnapshot(recentQuery(colRef, STUDY_RECORDS_LIMIT, false), (snapshot) => {
                     const rList = [];
                     snapshot.forEach((d) => { if(d.data()) rList.push({ ...d.data(), id: d.id }); });
                     rList.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
@@ -3353,6 +3621,69 @@
                 }
             };
 
+            /* 대댓글을 읽는다.
+               임원은 전부, 글쓴이는 공개된 것만 — 규칙이 그렇게 막고 있다.
+               볼 자격이 없으면 질의가 거부되므로 조용히 빈 목록으로 둔다. */
+            const replyPath = (qid) => ['artifacts', window.appId, 'public', 'data', 'qna', qid, 'replies'];
+
+            /* 대댓글은 글을 따라간다. 글을 볼 수 있으면 대댓글도 보인다.
+               서버가 같은 조건으로 막고 있어, 못 볼 사람은 질의 자체가 거부된다. */
+            const loadReplies = async (qna) => {
+                setReplies([]);
+                if (!qna || isLocalMode || !window.firebaseMethods) return;
+                const { collection, getDocs } = window.firebaseMethods;
+                if (!getDocs) return;
+
+                try {
+                    const colRef = collection(window.db, ...replyPath(qna.id));
+                    const snap = await getDocs(colRef);
+                    const rows = [];
+                    snap.forEach(d => { const v = d.data(); if (v) rows.push({ ...v, id: d.id }); });
+                    rows.sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+                    setReplies(rows);
+                } catch (e) { setReplies([]); }
+            };
+
+            const openQna = (qna) => {
+                setSelectedQna(qna);
+                setReplyText("");
+                loadReplies(qna);
+            };
+
+            /* 대댓글을 단다.
+               임원은 공개·비공개 둘 다, 글쓴이는 공개만 — 규칙도 같게 막아 두었다. */
+            const submitReply = async () => {
+                if (!selectedQna || !user) return;
+                if (!requireVerified()) return;
+                const text = replyText.trim();
+                if (!text) return triggerAlert("내용을 적어주세요.");
+                if (text.length > 1000) return triggerAlert("1000자를 넘길 수 없습니다.");
+
+                setReplyBusy(true);
+                try {
+                    const { doc, setDoc } = window.firebaseMethods;
+                    const id = String(Date.now());
+                    await setDoc(doc(window.db, ...replyPath(selectedQna.id), id), {
+                        text, author: user.name || '', authorEmail: user.email,
+                        createdAt: Date.now()
+                    });
+                    setReplyText("");
+                    await loadReplies(selectedQna);
+                    showToast("답변을 남겼습니다.");
+                } catch (err) {
+                    triggerAlert("답변을 남기지 못했습니다. 권한과 네트워크를 확인해 주세요.");
+                } finally { setReplyBusy(false); }
+            };
+
+            const deleteReply = async (rid) => {
+                if (!selectedQna) return;
+                try {
+                    const { doc, deleteDoc } = window.firebaseMethods;
+                    await deleteDoc(doc(window.db, ...replyPath(selectedQna.id), rid));
+                    await loadReplies(selectedQna);
+                } catch (e) { triggerAlert("지우지 못했습니다."); }
+            };
+
             const handleQnaSubmit = async (e) => {
                 e.preventDefault();
                 if (!user) return;
@@ -3360,13 +3691,17 @@
                 if(!newQnaTitle || !newQnaContent) return triggerAlert("제목/내용을 적어주세요.");
                 const newQna = {
                     id: String(Date.now()), title: newQnaTitle, content: newQnaContent,
-                    author: user.name, authorEmail: user.email, date: new Date().toISOString().split('T')[0]
+                    author: user.name, authorEmail: user.email,
+                    // 비공개로 올리면 나와 임원만 본다. 대댓글도 이걸 따라간다.
+                    private: !!newQnaPrivate,
+                    date: new Date().toISOString().split('T')[0]
                 };
                 if (!isLocalMode && window.firebaseMethods) {
                     const { doc, setDoc } = window.firebaseMethods;
                     setDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'qna', newQna.id), newQna).catch(()=>{});
                 }
-                showToast("게시글이 등록되었습니다!"); setIsQnaWriteOpen(false); setNewQnaTitle(""); setNewQnaContent("");
+                showToast(newQnaPrivate ? "비공개로 등록되었습니다." : "게시글이 등록되었습니다!");
+                setIsQnaWriteOpen(false); setNewQnaTitle(""); setNewQnaContent(""); setNewQnaPrivate(false);
             };
 
             const deleteMaterial = async (mId) => {
@@ -3709,6 +4044,27 @@
                     showToast(`${word} 을(를) 공유 사전에서 뺐습니다.`);
                 } catch (err) { triggerAlert('낱말을 빼지 못했습니다.'); }
             };
+
+            /* 닫고 간 자리를 실제로 치운다.
+               학생은 남의 live_study 를 지울 수 없으므로(규칙) 임원이 지나갈 때 정리한다.
+               목록에서 숨기는 것만으로는 문서가 계속 남아 읽기 비용이 든다. */
+            useEffect(() => {
+                if ((user?.rank || 1) < 2 || isLocalMode || !window.firebaseMethods) return;
+                const t = setTimeout(async () => {
+                    const { doc, deleteDoc, collection, getDocs } = window.firebaseMethods;
+                    if (!getDocs) return;
+                    try {
+                        const path = ['artifacts', window.appId, 'public', 'data', 'live_study'];
+                        const snap = await getDocs(collection(window.db, ...path));
+                        const gone = [];
+                        snap.forEach(d => { if (isStaleLive(d.data())) gone.push(d.id); });
+                        for (const id of gone.slice(0, 50)) {
+                            await deleteDoc(doc(window.db, ...path, id)).catch(() => {});
+                        }
+                    } catch (e) {}
+                }, 6000);
+                return () => clearTimeout(t);
+            }, [user?.rank, user?.uid]);
 
             /* 학습부가 사이트를 열면 조용히 한 번 훑는다.
                따로 누르지 않아도 합의된 낱말이 하루 안에는 올라간다. */
@@ -4089,9 +4445,38 @@
                 { key: 'materials', label: '학습 자료실',   short: '자료실', icon: 'fa-folder-open' },
                 { key: 'vocab',     label: '영어 단어장',   short: '단어장', icon: 'fa-book-open' },
                 { key: 'qna',       label: '요구사항',      short: '요구',   icon: 'fa-circle-question' },
-                { key: 'pinball',   label: '핀볼 추첨',     short: '핀볼',   icon: 'fa-trophy' }
+                { key: 'pinball',   label: '내 응모권',     short: '응모권', icon: 'fa-ticket' }
             ];
             const tabIndex = Math.max(0, MAIN_TABS.findIndex(t => t.key === activeMainTab));
+
+            /* 내가 낸 인증 기록.
+               임원은 전체를 이미 받고 있으므로 거기서 골라 쓰고,
+               일반 학생은 따로 구독한 목록을 쓴다. */
+            const myStudyRecords = ((user?.rank || 1) >= 2
+                ? (studyRecords || []).filter(r => r && r.userUid === user.uid)
+                : (myRecords || [])
+            ).slice().sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+
+            /* 최근 14일 막대그래프. 승인된 기록만 센다 — 화면의 누적 시간과 어긋나면 안 된다. */
+            const studyChart = (() => {
+                const DAYS = 14;
+                const now = new Date();
+                const today = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+                const bars = [];
+                for (let i = DAYS - 1; i >= 0; i--) {
+                    const from = today - i * 86400000;
+                    bars.push({ from, to: from + 86400000, mins: 0, d: new Date(from) });
+                }
+                myStudyRecords.forEach((r) => {
+                    if (!r || r.status !== 'approved' || !r.timestamp) return;
+                    const b = bars.find(x => r.timestamp >= x.from && r.timestamp < x.to);
+                    if (b) b.mins += (r.durationMins || 0);
+                });
+                const top = Math.max(60, ...bars.map(b => b.mins));
+                const total = bars.reduce((a, b) => a + b.mins, 0);
+                const studied = bars.filter(b => b.mins > 0).length;
+                return { bars, top, total, studied };
+            })();
 
             const ringR = 84;
             const ringC = 2 * Math.PI * ringR;
@@ -4644,6 +5029,101 @@
                                 </div>
 
                                 <div className="lg:col-span-2 space-y-6">
+
+                                    {/* 내 기록 — 그래프와 목록.
+                                        학생이 자기가 낸 인증이 어떻게 됐는지 볼 곳이 여태 없었다. */}
+                                    <div className="glass rounded-[28px] p-7 reveal d2">
+                                        <div className="flex items-center justify-between gap-3 mb-6 flex-wrap">
+                                            <div>
+                                                <div className="eyebrow text-[9px] mb-1">My Records</div>
+                                                <p className="text-[15px] font-extrabold tracking-tight">
+                                                    최근 2주 <span className="font-mono" style={{ color: 'var(--lime-ink)' }}>
+                                                        {Math.floor(studyChart.total / 60)}시간 {studyChart.total % 60}분
+                                                    </span>
+                                                    <span className="ml-2 text-xs font-bold" style={{ color: 'var(--txt-faint)' }}>
+                                                        {studyChart.studied}일 공부했어요
+                                                    </span>
+                                                </p>
+                                            </div>
+                                            <div className="flex gap-2">
+                                                {[['chart', '그래프'], ['list', '기록 목록']].map(([k, label]) => (
+                                                    <button key={k} onClick={() => setRecTab(k)} className="chip"
+                                                            style={recTab === k ? { background: 'color-mix(in srgb, var(--lime) 16%, transparent)', borderColor: 'var(--lime)', color: 'var(--lime-ink)' } : {}}>
+                                                        {label}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+
+                                        {recTab === 'chart' ? (
+                                            <div>
+                                                <div className="flex items-end gap-1.5" style={{ height: 132 }}>
+                                                    {studyChart.bars.map((b, i) => {
+                                                        const h = Math.round((b.mins / studyChart.top) * 100);
+                                                        const isToday = i === studyChart.bars.length - 1;
+                                                        return (
+                                                            <div key={b.from} className="flex-1 flex flex-col items-center justify-end h-full"
+                                                                 title={`${b.d.getMonth()+1}/${b.d.getDate()} · ${Math.floor(b.mins/60)}시간 ${b.mins%60}분`}>
+                                                                <div className="w-full rounded-t-md transition-all"
+                                                                     style={{ height: `${Math.max(b.mins > 0 ? 6 : 2, h)}%`,
+                                                                              background: b.mins > 0
+                                                                                  ? (isToday ? 'var(--lime-ink)' : 'var(--lime)')
+                                                                                  : 'var(--surface-2)' }}></div>
+                                                            </div>
+                                                        );
+                                                    })}
+                                                </div>
+                                                <div className="flex gap-1.5 mt-2">
+                                                    {studyChart.bars.map((b, i) => (
+                                                        <div key={b.from} className="flex-1 text-center font-mono text-[9px]"
+                                                             style={{ color: 'var(--txt-faint)' }}>
+                                                            {(i % 2 === 0 || i === studyChart.bars.length - 1) ? b.d.getDate() : ''}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                                <p className="text-[10px] mt-4 text-center" style={{ color: 'var(--txt-faint)' }}>
+                                                    학습부가 승인한 기록만 그려집니다.
+                                                </p>
+                                            </div>
+                                        ) : (
+                                            <div className="space-y-2 max-h-[300px] overflow-y-auto pr-1">
+                                                {myStudyRecords.slice(0, 60).map((r) => {
+                                                    const tone = r.status === 'approved'
+                                                        ? { t: '승인', c: 'var(--lime-ink)', bg: 'color-mix(in srgb, var(--lime) 20%, transparent)' }
+                                                        : r.status === 'rejected'
+                                                            ? { t: '반려', c: 'var(--rose)', bg: 'color-mix(in srgb, var(--pink) 20%, transparent)' }
+                                                            : { t: '확인 중', c: 'var(--gold)', bg: 'color-mix(in srgb, var(--gold) 16%, transparent)' };
+                                                    const d = r.timestamp ? new Date(r.timestamp) : null;
+                                                    return (
+                                                        <div key={r.id} className="flex items-center gap-3 py-2.5 px-3.5 rounded-xl"
+                                                             style={{ background: 'var(--surface-2)' }}>
+                                                            <span className="tag shrink-0" style={{ background: tone.bg, borderColor: 'transparent', color: tone.c }}>
+                                                                {tone.t}
+                                                            </span>
+                                                            <span className="text-xs font-bold flex-1 min-w-0">
+                                                                <span className="font-mono">{Math.floor((r.durationMins||0)/60)}</span>시간{' '}
+                                                                <span className="font-mono">{(r.durationMins||0)%60}</span>분
+                                                            </span>
+                                                            <span className="font-mono text-[10px] shrink-0" style={{ color: 'var(--txt-faint)' }}>
+                                                                {d ? `${d.getMonth()+1}/${d.getDate()}` : ''}
+                                                            </span>
+                                                        </div>
+                                                    );
+                                                })}
+                                                {myStudyRecords.length === 0 && (
+                                                    <p className="text-xs py-8 text-center" style={{ color: 'var(--txt-faint)' }}>
+                                                        아직 낸 기록이 없습니다. 타이머를 켜고 공부해 보세요.
+                                                    </p>
+                                                )}
+                                                {myStudyRecords.some(r => r.status === 'rejected') && (
+                                                    <p className="text-[10px] pt-3 text-center" style={{ color: 'var(--txt-faint)' }}>
+                                                        반려된 기록은 인증 사진이 충분하지 않은 경우입니다. 다시 제출해 주세요.
+                                                    </p>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+
                                     {/* 명예의 전당 */}
                                     <div className="relative glass topline rounded-[28px] p-7 overflow-hidden reveal d2"
                                          style={{ background: 'linear-gradient(150deg, color-mix(in srgb, var(--pink) 12%, transparent), color-mix(in srgb, var(--cyan) 9%, transparent) 60%, transparent)' }}>
@@ -4815,9 +5295,15 @@
                                                 <li key={qna.id}
                                                     className="row p-5 sm:px-7 cursor-pointer flex flex-col sm:flex-row sm:items-center justify-between gap-4 reveal"
                                                     style={{ animationDelay: `${Math.min(i, 9) * .05}s`, borderColor: 'var(--line)' }}
-                                                    onClick={() => setSelectedQna(qna)}>
+                                                    onClick={() => openQna(qna)}>
                                                     <div className="flex-1 min-w-0">
-                                                        <h3 className="text-sm font-extrabold tracking-tight">{qna.title}</h3>
+                                                        <h3 className="text-sm font-extrabold tracking-tight">
+                                                            {qna.private && (
+                                                                <i className="fa-solid fa-lock mr-1.5 text-[10px]"
+                                                                   style={{ color: 'var(--gold)' }} title="비공개"></i>
+                                                            )}
+                                                            {qna.title}
+                                                        </h3>
                                                         <p className="text-xs mt-1.5 line-clamp-1" style={{ color: 'var(--txt-faint)' }}>{qna.content}</p>
                                                     </div>
                                                     <div className="text-[11px] shrink-0 flex sm:flex-col gap-3 sm:gap-1 sm:text-right" style={{ color: 'var(--txt-faint)' }}>
@@ -4976,6 +5462,68 @@
                                     <div className="glass rounded-2xl p-5 text-sm whitespace-pre-wrap leading-relaxed min-h-[100px] reveal" style={{ color: 'var(--txt-dim)' }}>
                                         {selectedQna.content}
                                     </div>
+                                    {/* ── 대댓글 ──────────────────────────
+                                        글 안이 아니라 하위 문서라, 볼 자격이 없으면
+                                        서버가 질의를 거부한다. 화면에서만 감추는 게 아니다. */}
+                                    {(() => {
+                                        const mine = selectedQna.authorEmail === user?.email;
+                                        const staff = currentUserRank >= 2;
+                                        // 답변은 글을 따라간다. 여기까지 글이 열렸다면 답변도 볼 수 있다.
+                                        // 다만 답을 다는 건 글쓴이와 임원만.
+                                        const canReply = mine || staff;
+
+                                        return (
+                                            <div className="space-y-3 pt-2 reveal d2">
+                                                <div className="eyebrow text-[9px]">
+                                                    답변 {replies.length > 0 && `· ${replies.length}`}
+                                                </div>
+
+                                                {replies.map((r) => (
+                                                    <div key={r.id} className="glass rounded-2xl p-4">
+                                                        <div className="flex items-center gap-2 mb-2 flex-wrap">
+                                                            <span className="text-xs font-extrabold">{r.author || '이름 없음'}</span>
+                                                            <span className="font-mono text-[10px] ml-auto" style={{ color: 'var(--txt-faint)' }}>
+                                                                {r.createdAt ? new Date(r.createdAt).toLocaleDateString('ko-KR') : ''}
+                                                            </span>
+                                                            {(staff || r.authorEmail === user?.email) && (
+                                                                <button onClick={() => deleteReply(r.id)}
+                                                                        className="text-[10px] font-bold" style={{ color: 'var(--rose)' }}>지우기</button>
+                                                            )}
+                                                        </div>
+                                                        <p className="text-xs whitespace-pre-wrap leading-relaxed" style={{ color: 'var(--txt-dim)' }}>
+                                                            {r.text}
+                                                        </p>
+                                                    </div>
+                                                ))}
+
+                                                {replies.length === 0 && (
+                                                    <p className="text-[11px] py-3" style={{ color: 'var(--txt-faint)' }}>
+                                                        {canReply ? '아직 답변이 없습니다.' : '아직 답변이 없습니다.'}
+                                                    </p>
+                                                )}
+
+                                                {canReply && (
+                                                <div className="space-y-2.5 pt-1">
+                                                    <textarea rows="3" value={replyText} maxLength={1000}
+                                                              onChange={(e) => setReplyText(e.target.value)}
+                                                              placeholder={staff ? "답변을 남겨주세요." : "덧붙일 말이 있으면 적어주세요."}
+                                                              className="fld text-xs" style={{ minHeight: '4.5rem', resize: 'vertical' }}></textarea>
+                                                    <div className="flex items-center justify-between gap-3 flex-wrap">
+                                                        <span className="text-[10px]" style={{ color: 'var(--txt-faint)' }}>
+                                                            {selectedQna.private ? '이 글을 볼 수 있는 사람만 답변도 봅니다.' : '모두가 볼 수 있습니다.'}
+                                                        </span>
+                                                        <button onClick={submitReply} disabled={replyBusy || !replyText.trim()}
+                                                                className="btn btn-primary px-5 py-2.5 rounded-xl text-xs font-bold ml-auto"
+                                                                style={!replyText.trim() ? { opacity: .5 } : {}}>
+                                                            {replyBusy ? '남기는 중' : '답변 남기기'}
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                                )}
+                                            </div>
+                                        );
+                                    })()}
+
                                     <div className="space-y-4 pt-2 reveal d2">
                                         <div className="flex justify-between items-center">
                                             <div className="eyebrow text-[9px]">Request</div>
@@ -5768,6 +6316,34 @@
                                     <input type="text" placeholder="어떤 게 필요한가요?" value={newQnaTitle} onChange={(e)=>setNewQnaTitle(e.target.value)} className="fld" required />
 
                                     <textarea placeholder="왜 필요한지, 어떻게 됐으면 좋겠는지 적어주세요." value={newQnaContent} onChange={(e)=>setNewQnaContent(e.target.value)} rows="5" className="fld" required></textarea>
+                                    {/* 비공개로 올리면 나와 임원만 본다. 답변도 이걸 따라간다. */}
+
+                                    <button type="button" onClick={() => setNewQnaPrivate(!newQnaPrivate)}
+
+                                            className="w-full flex items-center gap-3 p-3.5 rounded-2xl text-left"
+
+                                            style={{ background: newQnaPrivate ? 'color-mix(in srgb, var(--gold) 12%, transparent)' : 'var(--surface-2)',
+
+                                                     border: `1px solid ${newQnaPrivate ? 'color-mix(in srgb, var(--gold) 45%, transparent)' : 'transparent'}` }}>
+
+                                        <i className={`fa-solid ${newQnaPrivate ? 'fa-lock' : 'fa-globe'} text-sm`}
+
+                                           style={{ color: newQnaPrivate ? 'var(--gold)' : 'var(--txt-faint)' }}></i>
+
+                                        <div className="min-w-0 flex-1">
+
+                                            <div className="text-xs font-extrabold">{newQnaPrivate ? '비공개' : '공개'}</div>
+
+                                            <div className="text-[10px] mt-0.5" style={{ color: 'var(--txt-faint)' }}>
+
+                                                {newQnaPrivate ? '나와 임원만 봅니다. 답변도 마찬가지예요.' : '모두가 볼 수 있습니다.'}
+
+                                            </div>
+
+                                        </div>
+
+                                    </button>
+
                                     <button type="submit" className="btn btn-primary w-full font-bold py-3.5 rounded-2xl text-sm">등록</button>
                                 </form>
                             </div>
