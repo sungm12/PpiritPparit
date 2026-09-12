@@ -2533,6 +2533,15 @@
             const [newDescription, setNewDescription] = useState("");
             const [uploadProgress, setUploadProgress] = useState(0);
 
+            // 올린 자료 고치기 — 제목·분류·설명만. 붙인 파일은 건드리지 않는다.
+            const [editingMaterial, setEditingMaterial] = useState(null);
+            const [editMatTitle, setEditMatTitle] = useState("");
+            const [editMatGrade, setEditMatGrade] = useState("1학년");
+            const [editMatSubject, setEditMatSubject] = useState("수학");
+            const [editMatSubSubject, setEditMatSubSubject] = useState("");
+            const [editMatDescription, setEditMatDescription] = useState("");
+            const [editMatBusy, setEditMatBusy] = useState(false);
+
             const [previewFileUrl, setPreviewFileUrl] = useState(null);
 
             // QnA 작성 상태 확장
@@ -3717,19 +3726,87 @@
                 setIsQnaWriteOpen(false); setNewQnaTitle(""); setNewQnaContent(""); setNewQnaPrivate(false);
             };
 
+            /* 올린 본인과 임원(rank 2) 이상이 고치고 지운다. */
+            const canManageMaterial = (mat) =>
+                !!mat && ((user?.rank || 1) >= 2 || mat.uploaderEmail === user?.email);
+
+            /* 저장된 분류가 교육과정 표에 없을 수도 있다(학년이 바뀌었거나 옛 자료거나).
+               그럴 때는 고르는 칸이 빈 채로 열리므로, 표 안에 있는 값으로 맞춰 준다. */
+            const normalizeCurriculum = (grade, subject, sub) => {
+                const g = CURRICULUM[grade] ? grade : Object.keys(CURRICULUM)[0];
+                const subjects = Object.keys(CURRICULUM[g]);
+                const s = subjects.includes(subject) ? subject : subjects[0];
+                const subs = CURRICULUM[g][s] || [];
+                const ss = subs.length ? (subs.includes(sub) ? sub : subs[0]) : "";
+                return [g, s, ss];
+            };
+
+            const openMaterialEditor = (mat) => {
+                if (!canManageMaterial(mat)) return;
+                const [g, sub, ss] = normalizeCurriculum(mat.grade, mat.subject, mat.subSubject);
+                setEditMatTitle(mat.title || "");
+                setEditMatGrade(g); setEditMatSubject(sub); setEditMatSubSubject(ss);
+                setEditMatDescription(mat.description || "");
+                setEditingMaterial(mat);
+            };
+
+            /* 제목·분류·설명만 바꾼다.
+               올린 사람·내려받은 횟수·좋아요는 그대로 두어야 하고,
+               서버도 그 칸들은 손대지 못하게 막고 있다. */
+            const handleMaterialEditSave = async (e) => {
+                e.preventDefault();
+                if (editMatBusy || !editingMaterial) return;
+                const title = (editMatTitle || "").trim();
+                const desc  = (editMatDescription || "").trim();
+                if (!title) return triggerAlert("제목을 입력해 주세요.");
+                if (title.length > 80) return triggerAlert("제목은 80자 이내로 입력해 주세요.");
+                if (!desc) return triggerAlert("설명을 입력해 주세요.");
+                if (desc.length > 1000) return triggerAlert("설명은 1000자 이내로 입력해 주세요.");
+
+                const patch = {
+                    title, grade: editMatGrade, subject: editMatSubject,
+                    subSubject: editMatSubSubject || "", description: desc,
+                    editedAt: Date.now()
+                };
+                const mId = editingMaterial.id;
+
+                setEditMatBusy(true);
+                if (!isLocalMode && window.firebaseMethods) {
+                    try {
+                        const { doc, updateDoc } = window.firebaseMethods;
+                        await updateDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'materials', mId), patch);
+                    } catch (err) {
+                        setEditMatBusy(false);
+                        return triggerAlert("서버가 이 수정을 거부했습니다.\n내가 올린 자료인지 확인해 주세요.");
+                    }
+                }
+                // 목록과 열려 있는 상세 창을 곧바로 맞춰 준다
+                setMaterials(prev => prev.map(m => m.id === mId ? { ...m, ...patch } : m));
+                setSelectedMaterial(prev => prev && prev.id === mId ? { ...prev, ...patch } : prev);
+                setEditingMaterial(null);
+                setEditMatBusy(false);
+                showToast("자료를 수정했습니다.");
+            };
+
             const deleteMaterial = async (mId) => {
-                if ((user?.rank || 1) < 2) return;
+                const target = materials.find(m => m.id === mId);
+                if (!canManageMaterial(target)) return;
                 triggerConfirm("이 자료를 영구 파기하시겠습니까?", async () => {
-                    const target = materials.find(m => m.id === mId); setSelectedMaterial(null);
+                    setSelectedMaterial(null);
                     if (!isLocalMode && window.firebaseMethods) {
                         const { doc, deleteDoc, ref, deleteObject } = window.firebaseMethods;
-                        deleteDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'materials', mId)).catch(()=>{});
+                        /* 파일부터 지운다.
+                           서버는 «이 자료를 올린 사람인가» 를 자료 문서로 확인하는데,
+                           문서를 먼저 지우면 확인할 것이 없어져 파일 삭제가 거부된다.
+                           그러면 아무도 못 찾는 파일만 남아 요금이 계속 나간다. */
                         if (target) {
                             const atts = target.attachments || [{ fileName: target.fileName }];
-                            atts.forEach(att => {
-                                if (att.fileName) deleteObject(ref(window.storage, `materials/${mId}_${att.fileName}`)).catch(()=>{});
-                            });
+                            await Promise.all(atts.map(att =>
+                                att && att.fileName
+                                    ? deleteObject(ref(window.storage, `materials/${mId}_${att.fileName}`)).catch(() => {})
+                                    : Promise.resolve()));
                         }
+                        deleteDoc(doc(window.db, 'artifacts', window.appId, 'public', 'data', 'materials', mId)).catch(()=>{});
                     }
                     showToast("삭제되었습니다.");
                 });
@@ -3934,7 +4011,11 @@
                         return { uid: u.id, name: u.name || '', grade: u.grade || '', petId: u.petId || null, mins,
                                  tickets: pinballTickets(mins, cfg.baseHours, cfg.stepHours) };
                     })
-                    .filter(e => e.tickets > 0)
+                    // 응모권을 아직 못 받은 학생도 담는다.
+                    // 빼 버리면 «내 응모권» 화면이 25시간 공부한 학생에게도
+                    // «기간 내 0시간 0분 인정됐어요» 라고 말한다. 제일 격려가 필요한 쪽이다.
+                    // 추첨에 넣을 사람은 tickets > 0 으로 따로 거른다.
+                    .filter(e => e.mins > 0)
                     .sort((a, b) => b.tickets - a.tickets || b.mins - a.mins);
             };
 
@@ -4059,10 +4140,10 @@
             };
 
             /* 닫고 간 자리를 실제로 치운다.
-               학생은 남의 live_study 를 지울 수 없으므로(규칙) 임원이 지나갈 때 정리한다.
+               학생은 남의 live_study 를 지울 수 없으므로(규칙) 학습부가 지나갈 때 정리한다.
                목록에서 숨기는 것만으로는 문서가 계속 남아 읽기 비용이 든다. */
             useEffect(() => {
-                if ((user?.rank || 1) < 2 || isLocalMode || !window.firebaseMethods) return;
+                if ((user?.rank || 1) < 3 || isLocalMode || !window.firebaseMethods) return;
                 const t = setTimeout(async () => {
                     const { doc, deleteDoc, collection, getDocs } = window.firebaseMethods;
                     if (!getDocs) return;
@@ -4115,11 +4196,14 @@
                 (pinballRoster.baseHours ?? 30) !== (pinballSettings.baseHours ?? 30) ||
                 (pinballRoster.stepHours ?? 10) !== (pinballSettings.stepHours ?? 10)));
 
-            const pinballTotalTickets = pinballEntrants.reduce((a, e) => a + e.tickets, 0);
+            // 명단에는 기간 내 인정 시간이 있는 학생이 모두 들어 있다.
+            // 실제로 추첨에 들어가는 사람은 응모권을 한 장이라도 받은 학생이다.
+            const pinballWinnersPool = pinballEntrants.filter(e => (e.tickets || 0) > 0);
+            const pinballTotalTickets = pinballWinnersPool.reduce((a, e) => a + e.tickets, 0);
 
             /* 추첨은 외부 룰렛 사이트에서 돌린다.
                그 사이트 입력 형식이 «이름*개수, 이름*개수» 라서 그대로 만들어 둔다. */
-            const pinballEntryList = pinballEntrants
+            const pinballEntryList = pinballWinnersPool
                 .map(e => `${e.name}*${e.tickets}`)
                 .join(', ');
 
@@ -5447,8 +5531,16 @@
                                     {!isPreviewMode && (
                                         <div className="space-y-4 reveal d3">
                                             <div className="flex justify-between items-center text-[11px] pb-3 border-b" style={{ borderColor: 'var(--line)', color: 'var(--txt-faint)' }}>
-                                                <span><i className="fa-regular fa-user mr-1.5"></i>{selectedMaterial.uploader} · {selectedMaterial.date}</span>
-                                                {currentUserRank >= 2 && <button onClick={() => deleteMaterial(selectedMaterial.id)} className="font-bold" style={{ color: 'var(--rose)' }}><i className="fa-solid fa-trash mr-1"></i>삭제</button>}
+                                                <span>
+                                                    <i className="fa-regular fa-user mr-1.5"></i>{selectedMaterial.uploader} · {selectedMaterial.date}
+                                                    {selectedMaterial.editedAt && <span className="ml-1.5">· 수정됨</span>}
+                                                </span>
+                                                {canManageMaterial(selectedMaterial) && (
+                                                    <span className="flex items-center gap-4 shrink-0">
+                                                        <button onClick={() => openMaterialEditor(selectedMaterial)} className="font-bold" style={{ color: 'var(--txt-dim)' }}><i className="fa-solid fa-pen mr-1"></i>수정</button>
+                                                        <button onClick={() => deleteMaterial(selectedMaterial.id)} className="font-bold" style={{ color: 'var(--rose)' }}><i className="fa-solid fa-trash mr-1"></i>삭제</button>
+                                                    </span>
+                                                )}
                                             </div>
                                         </div>
                                     )}
@@ -6047,7 +6139,7 @@
                                 {adminTab === "pinball" && currentUserRank >= 3 && (
                                     <form onSubmit={handlePinballSave} className="p-6 space-y-5 max-h-[70vh] overflow-y-auto reveal">
                                         <div className="grid grid-cols-3 gap-2.5">
-                                            {[['응모 학생', `${pinballEntrants.length}명`], ['응모권', `${pinballTotalTickets}장`],
+                                            {[['응모 학생', `${pinballWinnersPool.length}명`], ['응모권', `${pinballTotalTickets}장`],
                                               ['기준', `${(editPinball || {}).baseHours ?? 30}h+`]].map(([k, v]) => (
                                                 <div key={k} className="glass rounded-2xl p-3.5 text-center">
                                                     <div className="eyebrow text-[8px] mb-1.5">{k}</div>
@@ -6127,7 +6219,7 @@
                                             그 사이트가 «이름*개수, 이름*개수» 형식을 받으므로 그대로 만들어 둔다. */}
                                         <div>
                                             <div className="flex items-center justify-between gap-2 mb-2">
-                                                <label className="eyebrow text-[9px]">추첨 명단 · {pinballEntrants.length}명 {pinballTotalTickets}장</label>
+                                                <label className="eyebrow text-[9px]">추첨 명단 · {pinballWinnersPool.length}명 {pinballTotalTickets}장</label>
                                                 <button type="button" onClick={handleCopyEntryList}
                                                         disabled={pinballTotalTickets === 0}
                                                         className="btn btn-ghost px-3 py-1.5 rounded-lg text-[10px] font-bold">
@@ -6427,6 +6519,81 @@
                                     <button type="submit" disabled={uploadProgress>0} className="btn btn-primary w-full font-bold py-3.5 rounded-2xl text-sm">
                                         {uploadProgress>0 ? `업로드 중... ${uploadProgress}%` : '등록'}
                                     </button>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* ── 자료 수정 모달 ─────────────────
+                         붙인 파일은 여기서 못 바꾼다. 파일을 갈아 끼우려면
+                         지우고 다시 올려야 한다 — 내려받은 사람이 받은 것과
+                         이름만 같고 내용이 다른 파일이 생기면 안 되기 때문이다. */}
+                    {editingMaterial && (
+                        <div className="modal-bd fixed inset-0 bg-black/75 backdrop-blur-md flex items-center justify-center z-[60] p-4">
+                            <div className="modal-card glass-solid rounded-[28px] max-w-md w-full overflow-hidden">
+                                <div className="p-5 border-b flex justify-between items-center" style={{ borderColor: 'var(--line)' }}>
+                                    <div className="flex items-center gap-3">
+                                        <div className="w-9 h-9 rounded-xl grid place-items-center" style={{ background: 'color-mix(in srgb, var(--lime) 13%, transparent)' }}>
+                                            <i className="fa-solid fa-pen text-sm" style={{ color: 'var(--brand-lt)' }}></i>
+                                        </div>
+                                        <div>
+                                            <div className="eyebrow text-[8px] mb-1">Edit</div>
+                                            <h2 className="text-sm font-extrabold">자료 수정</h2>
+                                        </div>
+                                    </div>
+                                    <button onClick={() => setEditingMaterial(null)} className="icon-btn"><i className="fa-solid fa-xmark"></i></button>
+                                </div>
+                                <form onSubmit={handleMaterialEditSave} className="p-6 space-y-3.5 max-h-[70vh] overflow-y-auto">
+                                    <input type="text" placeholder="자료 제목" value={editMatTitle} maxLength={80}
+                                           onChange={(e) => setEditMatTitle(e.target.value)}
+                                           className="fld" disabled={editMatBusy} required />
+
+                                    <div className="flex gap-2.5">
+                                        <select value={editMatGrade} disabled={editMatBusy} onChange={(e) => {
+                                            const g = e.target.value; setEditMatGrade(g);
+                                            const firstSubj = Object.keys(CURRICULUM[g])[0] || ""; setEditMatSubject(firstSubj);
+                                            setEditMatSubSubject(CURRICULUM[g][firstSubj]?.[0] || "");
+                                        }} className="fld fld-sm flex-1">
+                                            {Object.keys(CURRICULUM).map(g => <option key={g} value={g}>{g}</option>)}
+                                        </select>
+                                        <select value={editMatSubject} disabled={editMatBusy} onChange={(e) => {
+                                            const sj = e.target.value; setEditMatSubject(sj);
+                                            setEditMatSubSubject(CURRICULUM[editMatGrade][sj]?.[0] || "");
+                                        }} className="fld fld-sm flex-1">
+                                            {Object.keys(CURRICULUM[editMatGrade]).map(sj => <option key={sj} value={sj}>{sj}</option>)}
+                                        </select>
+                                    </div>
+                                    {CURRICULUM[editMatGrade][editMatSubject]?.length > 0 && (
+                                        <select value={editMatSubSubject} disabled={editMatBusy}
+                                                onChange={(e) => setEditMatSubSubject(e.target.value)} className="fld fld-sm reveal">
+                                            {CURRICULUM[editMatGrade][editMatSubject].map(ss => <option key={ss} value={ss}>{ss}</option>)}
+                                        </select>
+                                    )}
+
+                                    <textarea placeholder="자료에 대한 설명" value={editMatDescription} rows="3" maxLength={1000}
+                                              onChange={(e) => setEditMatDescription(e.target.value)}
+                                              className="fld" disabled={editMatBusy} required></textarea>
+
+                                    <div className="glass rounded-2xl p-4 flex items-start gap-3">
+                                        <i className="fa-solid fa-paperclip text-xs mt-0.5 shrink-0" style={{ color: 'var(--txt-faint)' }}></i>
+                                        <div className="min-w-0 text-[11px] leading-relaxed" style={{ color: 'var(--txt-faint)' }}>
+                                            붙인 파일은 그대로 둡니다.
+                                            <span className="block mt-1 truncate" style={{ color: 'var(--txt-dim)' }}>
+                                                {(editingMaterial.attachments || [{ fileName: editingMaterial.fileName }])
+                                                    .map(a => a && a.fileName).filter(Boolean).join(', ') || '첨부 없음'}
+                                            </span>
+                                            파일을 바꾸려면 자료를 지우고 다시 올려주세요.
+                                        </div>
+                                    </div>
+
+                                    <div className="flex gap-2.5">
+                                        <button type="button" onClick={() => setEditingMaterial(null)} disabled={editMatBusy}
+                                                className="btn btn-ghost px-5 py-3.5 rounded-2xl text-sm font-bold">취소</button>
+                                        <button type="submit" disabled={editMatBusy}
+                                                className="btn btn-primary flex-1 font-bold py-3.5 rounded-2xl text-sm">
+                                            {editMatBusy ? '저장 중...' : '저장'}
+                                        </button>
+                                    </div>
                                 </form>
                             </div>
                         </div>
